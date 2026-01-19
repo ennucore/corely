@@ -293,11 +293,40 @@ EOF
             ;;
 
         Linux)
-            # Linux: Try systemd user service, fall back to cron
-            if command -v systemctl &> /dev/null && [ -d "$HOME/.config/systemd/user" ] || mkdir -p "$HOME/.config/systemd/user"; then
-                SERVICE_FILE="$HOME/.config/systemd/user/corely-worker.service"
+            # Linux: Use system service for root, user service otherwise
+            if command -v systemctl &> /dev/null; then
+                if [ "$(id -u)" = "0" ]; then
+                    # Running as root - use system-level service
+                    SERVICE_FILE="/etc/systemd/system/corely-worker.service"
 
-                cat > "$SERVICE_FILE" << EOF
+                    cat > "$SERVICE_FILE" << EOF
+[Unit]
+Description=Corely Worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$INSTALL_DIR/corely
+Restart=always
+RestartSec=10
+User=root
+Environment="HOME=/root"
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+                    systemctl daemon-reload
+                    systemctl enable corely-worker
+                    systemctl start corely-worker
+                    echo -e "${{GREEN}}Systemd system service installed and started${{NC}}"
+                else
+                    # Regular user - use user service
+                    mkdir -p "$HOME/.config/systemd/user"
+                    SERVICE_FILE="$HOME/.config/systemd/user/corely-worker.service"
+
+                    cat > "$SERVICE_FILE" << EOF
 [Unit]
 Description=Corely Worker
 After=network-online.target
@@ -313,10 +342,11 @@ RestartSec=10
 WantedBy=default.target
 EOF
 
-                systemctl --user daemon-reload
-                systemctl --user enable corely-worker
-                systemctl --user start corely-worker
-                echo -e "${{GREEN}}Systemd user service installed and started${{NC}}"
+                    systemctl --user daemon-reload
+                    systemctl --user enable corely-worker
+                    systemctl --user start corely-worker
+                    echo -e "${{GREEN}}Systemd user service installed and started${{NC}}"
+                fi
             else
                 # Fallback to cron @reboot
                 CRON_CMD="@reboot $INSTALL_DIR/corely >> $CONFIG_DIR/worker.log 2>&1"
@@ -394,7 +424,11 @@ echo "To start manually:"
 echo "  $INSTALL_DIR/corely"
 echo ""
 echo "To check status (systemd):"
-echo "  systemctl --user status corely-worker"
+if [ "$(id -u)" = "0" ]; then
+    echo "  systemctl status corely-worker"
+else
+    echo "  systemctl --user status corely-worker"
+fi
 echo ""
 echo "To view logs:"
 echo "  tail -f $CONFIG_DIR/worker.log"
