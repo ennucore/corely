@@ -40,7 +40,7 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 SERVER_PID_FILE = CONFIG_DIR / "server.pid"
 SERVER_LOG_FILE = CONFIG_DIR / "server.log"
 
-DEFAULT_SERVER_URL = os.environ.get("CORELY_SERVER", "http://127.0.0.1:8000")
+DEFAULT_SERVER_URL = os.environ.get("CORELY_SERVER", "https://corelyserver.com")
 
 _server_url = DEFAULT_SERVER_URL
 
