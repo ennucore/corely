@@ -144,7 +144,7 @@ export function CollectionConfigPage() {
     fontSize: '18px',
     padding: '12px 24px',
     background: activeTab === tab ? colors.surface : 'transparent',
-    color: activeTab === tab ? colors.cyan : colors.text,
+    color: activeTab === tab ? colors.cyan : colors.textPrimary,
     border: `1px solid ${activeTab === tab ? colors.cyan : colors.cyan}40`,
     borderBottom: activeTab === tab ? 'none' : `1px solid ${colors.cyan}40`,
     borderRadius: '8px 8px 0 0',
@@ -190,7 +190,7 @@ export function CollectionConfigPage() {
           marginBottom: '30px',
         }}>
           <div>
-            <GlowButton onClick={() => navigate(`/worker/${id}`)} color="cyan" style={{ marginRight: '15px' }}>
+            <GlowButton onClick={() => navigate(`/worker/${id}`)} variant="cyan" style={{ marginRight: '15px' }}>
               BACK TO WORKER
             </GlowButton>
             <span style={{
@@ -216,11 +216,11 @@ export function CollectionConfigPage() {
                 <span style={{
                   fontFamily: 'VT323, monospace',
                   fontSize: '20px',
-                  color: colors.text,
+                  color: colors.textPrimary,
                 }}>
                   STATUS:{' '}
                   <span style={{
-                    color: status?.is_collecting ? colors.green : colors.text,
+                    color: status?.is_collecting ? colors.green : colors.textPrimary,
                     textShadow: status?.is_collecting ? `0 0 10px ${colors.green}` : 'none',
                   }}>
                     {status?.is_collecting ? 'COLLECTING' : 'IDLE'}
@@ -230,7 +230,7 @@ export function CollectionConfigPage() {
                   <span style={{
                     fontFamily: 'VT323, monospace',
                     fontSize: '16px',
-                    color: colors.text,
+                    color: colors.textPrimary,
                     marginLeft: '20px',
                   }}>
                     Session: {status.session_id.substring(0, 20)}...
@@ -249,11 +249,11 @@ export function CollectionConfigPage() {
               </div>
               <div style={{ display: 'flex', gap: '15px' }}>
                 {!status?.is_collecting ? (
-                  <GlowButton onClick={handleStart} color="green" disabled={!worker?.is_online}>
+                  <GlowButton onClick={handleStart} variant="green" disabled={!worker?.is_online}>
                     START COLLECTION
                   </GlowButton>
                 ) : (
-                  <GlowButton onClick={handleStop} color="red">
+                  <GlowButton onClick={handleStop} variant="red">
                     STOP COLLECTION
                   </GlowButton>
                 )}
@@ -263,7 +263,7 @@ export function CollectionConfigPage() {
               <div style={{
                 fontFamily: 'VT323, monospace',
                 fontSize: '14px',
-                color: colors.yellow,
+                color: colors.amber,
                 marginTop: '10px',
               }}>
                 Worker is offline. Collection controls will be available when the worker reconnects.

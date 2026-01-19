@@ -82,7 +82,7 @@ export function SessionBrowser({ workerId, onSelectChunk }: SessionBrowserProps)
       case 'completed':
         return colors.cyan
       default:
-        return colors.text
+        return colors.textPrimary
     }
   }
 
@@ -105,7 +105,7 @@ export function SessionBrowser({ workerId, onSelectChunk }: SessionBrowserProps)
       <div style={{
         fontFamily: 'VT323, monospace',
         fontSize: '18px',
-        color: colors.text,
+        color: colors.textPrimary,
         textAlign: 'center',
         padding: '40px',
       }}>
@@ -159,7 +159,7 @@ export function SessionBrowser({ workerId, onSelectChunk }: SessionBrowserProps)
               <div style={{
                 fontFamily: 'VT323, monospace',
                 fontSize: '14px',
-                color: colors.text,
+                color: colors.textPrimary,
                 marginTop: '8px',
               }}>
                 <div>Started: {formatDate(session.started_at)}</div>
@@ -188,7 +188,7 @@ export function SessionBrowser({ workerId, onSelectChunk }: SessionBrowserProps)
               <div style={{
                 fontFamily: 'VT323, monospace',
                 fontSize: '16px',
-                color: colors.text,
+                color: colors.textPrimary,
                 padding: '20px',
               }}>
                 No chunks in this session.
@@ -213,7 +213,7 @@ export function SessionBrowser({ workerId, onSelectChunk }: SessionBrowserProps)
                   <div style={{
                     fontFamily: 'VT323, monospace',
                     fontSize: '14px',
-                    color: colors.text,
+                    color: colors.textPrimary,
                     marginTop: '5px',
                   }}>
                     <div>Size: {chunk.size_bytes ? `${(chunk.size_bytes / 1024 / 1024).toFixed(2)} MB` : 'N/A'}</div>

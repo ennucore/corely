@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { colors } from '../../styles'
 import { CollectionConfig } from '../../api/client'
 import { GlowButton } from '../GlowButton'
@@ -31,7 +30,7 @@ const checkboxStyle = {
 const labelStyle = {
   fontFamily: 'VT323, monospace',
   fontSize: '18px',
-  color: colors.text,
+  color: colors.textPrimary,
   display: 'flex',
   alignItems: 'center',
   gap: '10px',
@@ -261,7 +260,7 @@ export function ConfigEditor({ config, onChange, onSave, isSaving }: ConfigEdito
               onChange={(e) => updateDirectorySync({ sync_interval_secs: parseInt(e.target.value) || 300 })}
               style={{ ...inputStyle, width: '100px' }}
             />
-            <span style={{ color: colors.text }}>seconds</span>
+            <span style={{ color: colors.textPrimary }}>seconds</span>
           </div>
           <label style={labelStyle}>
             <input
@@ -289,7 +288,7 @@ export function ConfigEditor({ config, onChange, onSave, isSaving }: ConfigEdito
               onChange={(e) => onChange({ ...config, chunk_duration_secs: parseInt(e.target.value) || 60 })}
               style={{ ...inputStyle, width: '100px' }}
             />
-            <span style={{ color: colors.text }}>seconds</span>
+            <span style={{ color: colors.textPrimary }}>seconds</span>
           </div>
         </div>
       </div>

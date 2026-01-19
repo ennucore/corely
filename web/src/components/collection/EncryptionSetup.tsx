@@ -73,11 +73,11 @@ export function EncryptionSetup({ workerId, onComplete }: EncryptionSetupProps) 
         <div style={{
           fontFamily: 'VT323, monospace',
           fontSize: '16px',
-          color: colors.text,
+          color: colors.textPrimary,
           lineHeight: '1.6',
         }}>
           <p>Your data will now be encrypted before uploading to R2.</p>
-          <p style={{ color: colors.yellow, marginTop: '15px' }}>
+          <p style={{ color: colors.amber, marginTop: '15px' }}>
             IMPORTANT: Remember your password! It is NOT stored on the server.
             <br />
             You will need it to decrypt your data.
@@ -107,7 +107,7 @@ export function EncryptionSetup({ workerId, onComplete }: EncryptionSetupProps) 
       <div style={{
         fontFamily: 'VT323, monospace',
         fontSize: '14px',
-        color: colors.text,
+        color: colors.textPrimary,
         marginBottom: '25px',
         lineHeight: '1.6',
       }}>
@@ -115,7 +115,7 @@ export function EncryptionSetup({ workerId, onComplete }: EncryptionSetupProps) 
           Enable encryption to protect your collected data before uploading to cloud storage.
           Data is encrypted using X25519 + AES-256-GCM.
         </p>
-        <p style={{ color: colors.yellow, marginTop: '10px' }}>
+        <p style={{ color: colors.amber, marginTop: '10px' }}>
           WARNING: The password is NOT stored on the server. If you forget it,
           your encrypted data cannot be recovered.
         </p>
@@ -125,7 +125,7 @@ export function EncryptionSetup({ workerId, onComplete }: EncryptionSetupProps) 
         <label style={{
           fontFamily: 'VT323, monospace',
           fontSize: '16px',
-          color: colors.text,
+          color: colors.textPrimary,
           display: 'block',
           marginBottom: '8px',
         }}>
@@ -144,7 +144,7 @@ export function EncryptionSetup({ workerId, onComplete }: EncryptionSetupProps) 
         <label style={{
           fontFamily: 'VT323, monospace',
           fontSize: '16px',
-          color: colors.text,
+          color: colors.textPrimary,
           display: 'block',
           marginBottom: '8px',
         }}>
