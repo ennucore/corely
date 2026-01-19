@@ -1,0 +1,30 @@
+[project]
+name = "corely-client"
+version = "0.1.0"
+description = "Corely client library for remote machine management"
+requires-python = ">=3.10"
+dependencies = [
+    "httpx>=0.26.0",
+    "websockets>=12.0",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[project.scripts]
+corely = "corely_client.cli:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
