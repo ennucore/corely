@@ -14,14 +14,8 @@ mod system;
 use clap::Parser;
 use std::panic;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::Duration;
 use tracing::{error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
-
-/// Track consecutive crashes for exponential backoff
-static CRASH_COUNT: AtomicU32 = AtomicU32::new(0);
-const MAX_CRASH_BACKOFF_SECS: u64 = 300; // Max 5 minutes between retries
 
 #[derive(Parser, Debug)]
 #[command(name = "corely-worker")]
@@ -135,44 +129,11 @@ async fn main() -> anyhow::Result<()> {
         Vec::new()
     };
 
-    // Resilient main loop - never exit, always recover from crashes
-    loop {
-        let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(async {
-                connection::run(&server, &token, &worker_name, plugins.clone()).await
-            })
-        }));
-
-        match result {
-            Ok(Ok(())) => {
-                // Normal exit - shouldn't happen, but reset crash count
-                CRASH_COUNT.store(0, Ordering::SeqCst);
-                info!("Connection loop exited normally, restarting...");
-            }
-            Ok(Err(e)) => {
-                // Error from connection::run
-                error!("Connection error: {}, restarting...", e);
-                CRASH_COUNT.store(0, Ordering::SeqCst); // Connection errors are expected
-            }
-            Err(panic_info) => {
-                // Caught a panic - use exponential backoff
-                let crash_count = CRASH_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
-                let backoff_secs = std::cmp::min(
-                    (2u64.pow(crash_count as u32)),
-                    MAX_CRASH_BACKOFF_SECS
-                );
-                error!(
-                    "PANIC RECOVERED (crash #{}, panic: {:?}), backing off for {}s...",
-                    crash_count, panic_info, backoff_secs
-                );
-                std::thread::sleep(Duration::from_secs(backoff_secs));
-            }
-        }
-
-        // Brief sleep before restart
-        std::thread::sleep(Duration::from_secs(1));
-    }
+    // The connection::run function already has built-in reconnection logic.
+    // It loops forever, reconnecting on disconnection.
+    // Panics will be caught by the panic hook and logged, but we let them propagate
+    // to allow systemd/launchd to restart the service if needed.
+    connection::run(&server, &token, &worker_name, plugins).await
 }
 
 /// Request macOS permissions by triggering the relevant APIs.
