@@ -81,10 +81,20 @@ jobs:
           npm ci
           VITE_API_URL=/api npm run build
 
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep '^version' worker/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Worker version: $VERSION"
+
       - name: Deploy
         run: |
           # Upload worker binaries
           scp binaries/* ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }}:/opt/corely/binaries/
+
+          # Upload VERSION file
+          echo "${{ steps.version.outputs.version }}" | ssh ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} 'cat > /opt/corely/binaries/VERSION'
 
           # Sync server code
           rsync -avz --delete \

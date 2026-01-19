@@ -49,7 +49,7 @@ def generate_install_script(
     2. Decrypts the worker token
     3. Detects OS and architecture
     4. Downloads and installs the worker binary
-    5. Configures autostart
+    5. Configures autostart with auto-update
     """
 
     # Encrypt the worker token
@@ -152,82 +152,205 @@ detect_platform() {{
 }}
 
 PLATFORM=$(detect_platform)
+OS=$(echo $PLATFORM | cut -d'-' -f1)
 echo -e "${{BLUE}}Detected platform: $PLATFORM${{NC}}"
 
-# Installation paths
-if [ "$OS" = "windows" ]; then
-    INSTALL_DIR="$APPDATA/Corely"
-    BINARY_NAME="corely-worker.exe"
-else
-    INSTALL_DIR="$HOME/.local/bin"
-    BINARY_NAME="corely-worker"
+# Install system dependencies on Linux
+install_linux_deps() {{
+    echo -e "${{BLUE}}Installing system dependencies...${{NC}}"
+
+    if command -v apt-get &> /dev/null; then
+        # Debian/Ubuntu
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq libxdo3 libssl3 || true
+    elif command -v dnf &> /dev/null; then
+        # Fedora/RHEL
+        sudo dnf install -y xdotool openssl || true
+    elif command -v pacman &> /dev/null; then
+        # Arch
+        sudo pacman -S --noconfirm xdotool openssl || true
+    elif command -v zypper &> /dev/null; then
+        # OpenSUSE
+        sudo zypper install -y xdotool libopenssl1_1 || true
+    else
+        echo -e "${{YELLOW}}Warning: Could not detect package manager. You may need to install libxdo manually.${{NC}}"
+    fi
+}}
+
+# Install dependencies on Linux
+if [ "$OS" = "linux" ]; then
+    install_linux_deps
 fi
 
-CONFIG_DIR="$HOME/.config/corely"
+# Determine installation mode: try root-level first, fall back to user
+determine_install_mode() {{
+    if [ "$(id -u)" = "0" ]; then
+        # Running as root - use system-wide installation
+        echo "system"
+    elif sudo -n true 2>/dev/null; then
+        # Have passwordless sudo - use system-wide
+        echo "system"
+    else
+        # No root access - use user installation
+        echo "user"
+    fi
+}}
+
+INSTALL_MODE=$(determine_install_mode)
+echo -e "${{BLUE}}Installation mode: $INSTALL_MODE${{NC}}"
+
+# Set paths based on installation mode
+if [ "$INSTALL_MODE" = "system" ]; then
+    INSTALL_DIR="/opt/corely/bin"
+    CONFIG_DIR="/etc/corely"
+    LOG_DIR="/var/log/corely"
+    RUN_AS_ROOT=true
+else
+    INSTALL_DIR="$HOME/.local/bin"
+    CONFIG_DIR="$HOME/.config/corely"
+    LOG_DIR="$HOME/.config/corely"
+    RUN_AS_ROOT=false
+fi
+
+BINARY_NAME="corely-worker"
 BINARY_PATH="$INSTALL_DIR/$BINARY_NAME"
 
 # Create directories
 echo -e "${{BLUE}}Creating directories...${{NC}}"
-mkdir -p "$INSTALL_DIR"
-mkdir -p "$CONFIG_DIR"
+if [ "$RUN_AS_ROOT" = true ]; then
+    sudo mkdir -p "$INSTALL_DIR"
+    sudo mkdir -p "$CONFIG_DIR"
+    sudo mkdir -p "$LOG_DIR"
+else
+    mkdir -p "$INSTALL_DIR"
+    mkdir -p "$CONFIG_DIR"
+fi
 
 # Download the worker binary
 BINARY_URL="$BINARY_BASE_URL/downloads/corely-worker-$PLATFORM"
 echo -e "${{BLUE}}Downloading worker binary from $BINARY_URL...${{NC}}"
 
+TEMP_BINARY=$(mktemp)
 if command -v curl &> /dev/null; then
-    HTTP_CODE=$(curl -fsSL -w "%{{http_code}}" -o "$BINARY_PATH.tmp" "$BINARY_URL" 2>/dev/null || echo "000")
+    HTTP_CODE=$(curl -fsSL -w "%{{http_code}}" -o "$TEMP_BINARY" "$BINARY_URL" 2>/dev/null || echo "000")
 elif command -v wget &> /dev/null; then
-    wget -q -O "$BINARY_PATH.tmp" "$BINARY_URL" && HTTP_CODE="200" || HTTP_CODE="000"
+    wget -q -O "$TEMP_BINARY" "$BINARY_URL" && HTTP_CODE="200" || HTTP_CODE="000"
 else
     echo -e "${{RED}}Error: curl or wget is required${{NC}}"
     exit 1
 fi
 
 if [ "$HTTP_CODE" != "200" ]; then
-    echo -e "${{YELLOW}}Warning: Could not download pre-built binary (HTTP $HTTP_CODE)${{NC}}"
-    echo -e "${{YELLOW}}You may need to build from source or download manually${{NC}}"
-    rm -f "$BINARY_PATH.tmp"
-
-    # Create a placeholder script that shows instructions
-    cat > "$BINARY_PATH" << 'PLACEHOLDER'
-#!/bin/bash
-echo "Corely worker binary not installed."
-echo "Please download from: https://github.com/your-org/corely/releases"
-exit 1
-PLACEHOLDER
-    chmod +x "$BINARY_PATH"
-else
-    mv "$BINARY_PATH.tmp" "$BINARY_PATH"
-    chmod +x "$BINARY_PATH"
-    echo -e "${{GREEN}}Binary downloaded successfully${{NC}}"
+    echo -e "${{RED}}Error: Could not download pre-built binary (HTTP $HTTP_CODE)${{NC}}"
+    echo -e "${{YELLOW}}Please check your internet connection or try again later.${{NC}}"
+    rm -f "$TEMP_BINARY"
+    exit 1
 fi
+
+# Install binary
+if [ "$RUN_AS_ROOT" = true ]; then
+    sudo mv "$TEMP_BINARY" "$BINARY_PATH"
+    sudo chmod +x "$BINARY_PATH"
+else
+    mv "$TEMP_BINARY" "$BINARY_PATH"
+    chmod +x "$BINARY_PATH"
+fi
+echo -e "${{GREEN}}Binary downloaded successfully${{NC}}"
 
 # Create configuration file
 echo -e "${{BLUE}}Creating configuration...${{NC}}"
-cat > "$CONFIG_DIR/worker.conf" << EOF
-# Corely Worker Configuration
+CONFIG_CONTENT="# Corely Worker Configuration
 SERVER_URL=$SERVER_URL
 WORKER_TOKEN=$WORKER_TOKEN
-EOF
-chmod 600 "$CONFIG_DIR/worker.conf"
+BINARY_BASE_URL=$BINARY_BASE_URL
+PLATFORM=$PLATFORM"
 
-# Create wrapper script that loads config
-cat > "$INSTALL_DIR/corely" << 'WRAPPER'
-#!/bin/bash
-CONFIG_FILE="$HOME/.config/corely/worker.conf"
-if [ -f "$CONFIG_FILE" ]; then
-    source "$CONFIG_FILE"
-    exec "$HOME/.local/bin/corely-worker" --server "$SERVER_URL/ws/worker" --token "$WORKER_TOKEN" "$@"
+if [ "$RUN_AS_ROOT" = true ]; then
+    echo "$CONFIG_CONTENT" | sudo tee "$CONFIG_DIR/worker.conf" > /dev/null
+    sudo chmod 600 "$CONFIG_DIR/worker.conf"
 else
-    echo "Configuration not found: $CONFIG_FILE"
+    echo "$CONFIG_CONTENT" > "$CONFIG_DIR/worker.conf"
+    chmod 600 "$CONFIG_DIR/worker.conf"
+fi
+
+# Create wrapper script that loads config and handles auto-update
+WRAPPER_SCRIPT='#!/bin/bash
+# Corely worker wrapper with auto-update support
+
+# Determine config location
+if [ -f "/etc/corely/worker.conf" ]; then
+    CONFIG_FILE="/etc/corely/worker.conf"
+    INSTALL_DIR="/opt/corely/bin"
+    LOG_DIR="/var/log/corely"
+    IS_SYSTEM=true
+elif [ -f "$HOME/.config/corely/worker.conf" ]; then
+    CONFIG_FILE="$HOME/.config/corely/worker.conf"
+    INSTALL_DIR="$HOME/.local/bin"
+    LOG_DIR="$HOME/.config/corely"
+    IS_SYSTEM=false
+else
+    echo "Configuration not found"
     exit 1
 fi
-WRAPPER
-chmod +x "$INSTALL_DIR/corely"
 
-# Add to PATH if needed
+source "$CONFIG_FILE"
+
+# Auto-update function
+check_for_updates() {{
+    if [ -z "$BINARY_BASE_URL" ] || [ -z "$PLATFORM" ]; then
+        return 0
+    fi
+
+    CURRENT_VERSION=$("$INSTALL_DIR/corely-worker" --version 2>/dev/null | head -1 || echo "unknown")
+    VERSION_URL="$BINARY_BASE_URL/api/worker/version"
+
+    LATEST_VERSION=$(curl -fsSL "$VERSION_URL" 2>/dev/null || echo "")
+
+    if [ -n "$LATEST_VERSION" ] && [ "$LATEST_VERSION" != "$CURRENT_VERSION" ]; then
+        echo "$(date): Update available: $CURRENT_VERSION -> $LATEST_VERSION" >> "$LOG_DIR/update.log"
+
+        BINARY_URL="$BINARY_BASE_URL/downloads/corely-worker-$PLATFORM"
+        TEMP_BINARY=$(mktemp)
+
+        if curl -fsSL -o "$TEMP_BINARY" "$BINARY_URL" 2>/dev/null; then
+            chmod +x "$TEMP_BINARY"
+            if [ "$IS_SYSTEM" = true ]; then
+                sudo mv "$TEMP_BINARY" "$INSTALL_DIR/corely-worker"
+            else
+                mv "$TEMP_BINARY" "$INSTALL_DIR/corely-worker"
+            fi
+            echo "$(date): Updated to $LATEST_VERSION" >> "$LOG_DIR/update.log"
+        else
+            rm -f "$TEMP_BINARY"
+        fi
+    fi
+}}
+
+# Check for updates on startup (in background)
+check_for_updates &
+
+# Run the worker
+exec "$INSTALL_DIR/corely-worker" --server "$SERVER_URL/ws/worker" --token "$WORKER_TOKEN" "$@"
+'
+
+if [ "$RUN_AS_ROOT" = true ]; then
+    echo "$WRAPPER_SCRIPT" | sudo tee "$INSTALL_DIR/corely" > /dev/null
+    sudo chmod +x "$INSTALL_DIR/corely"
+else
+    echo "$WRAPPER_SCRIPT" > "$INSTALL_DIR/corely"
+    chmod +x "$INSTALL_DIR/corely"
+fi
+
+# Add to PATH if needed (user mode only)
 add_to_path() {{
+    if [ "$RUN_AS_ROOT" = true ]; then
+        # System install is in /opt/corely/bin, add to system PATH
+        if [ ! -f /etc/profile.d/corely.sh ]; then
+            echo 'export PATH="$PATH:/opt/corely/bin"' | sudo tee /etc/profile.d/corely.sh > /dev/null
+        fi
+        return
+    fi
+
     SHELL_NAME=$(basename "$SHELL")
     case "$SHELL_NAME" in
         bash)
@@ -293,13 +416,10 @@ EOF
             ;;
 
         Linux)
-            # Linux: Use system service for root, user service otherwise
             if command -v systemctl &> /dev/null; then
-                if [ "$(id -u)" = "0" ]; then
-                    # Running as root - use system-level service
-                    SERVICE_FILE="/etc/systemd/system/corely-worker.service"
-
-                    cat > "$SERVICE_FILE" << EOF
+                if [ "$RUN_AS_ROOT" = true ]; then
+                    # System-level service
+                    sudo tee /etc/systemd/system/corely-worker.service > /dev/null << EOF
 [Unit]
 Description=Corely Worker
 After=network-online.target
@@ -310,23 +430,21 @@ Type=simple
 ExecStart=$INSTALL_DIR/corely
 Restart=always
 RestartSec=10
-User=root
 Environment="HOME=/root"
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-                    systemctl daemon-reload
-                    systemctl enable corely-worker
-                    systemctl start corely-worker
+                    sudo systemctl daemon-reload
+                    sudo systemctl enable corely-worker
+                    sudo systemctl start corely-worker
                     echo -e "${{GREEN}}Systemd system service installed and started${{NC}}"
                 else
-                    # Regular user - use user service
+                    # User-level service
                     mkdir -p "$HOME/.config/systemd/user"
-                    SERVICE_FILE="$HOME/.config/systemd/user/corely-worker.service"
 
-                    cat > "$SERVICE_FILE" << EOF
+                    cat > "$HOME/.config/systemd/user/corely-worker.service" << EOF
 [Unit]
 Description=Corely Worker
 After=network-online.target
@@ -349,12 +467,12 @@ EOF
                 fi
             else
                 # Fallback to cron @reboot
-                CRON_CMD="@reboot $INSTALL_DIR/corely >> $CONFIG_DIR/worker.log 2>&1"
+                CRON_CMD="@reboot $INSTALL_DIR/corely >> $LOG_DIR/worker.log 2>&1"
                 (crontab -l 2>/dev/null | grep -v "corely"; echo "$CRON_CMD") | crontab -
                 echo -e "${{GREEN}}Cron job installed for autostart${{NC}}"
 
                 # Start now
-                nohup "$INSTALL_DIR/corely" >> "$CONFIG_DIR/worker.log" 2>&1 &
+                nohup "$INSTALL_DIR/corely" >> "$LOG_DIR/worker.log" 2>&1 &
                 echo -e "${{GREEN}}Worker started in background${{NC}}"
             fi
             ;;
@@ -383,7 +501,6 @@ request_macos_permissions() {{
     sleep 3
     kill $PERM_PID 2>/dev/null || true
 
-    # Open System Preferences to the right pane
     echo ""
     echo -e "${{YELLOW}}If permission dialogs didn't appear, please manually grant access:${{NC}}"
     echo "  System Settings > Privacy & Security > Screen Recording"
@@ -424,14 +541,14 @@ echo "To start manually:"
 echo "  $INSTALL_DIR/corely"
 echo ""
 echo "To check status (systemd):"
-if [ "$(id -u)" = "0" ]; then
-    echo "  systemctl status corely-worker"
+if [ "$RUN_AS_ROOT" = true ]; then
+    echo "  sudo systemctl status corely-worker"
 else
     echo "  systemctl --user status corely-worker"
 fi
 echo ""
 echo "To view logs:"
-echo "  tail -f $CONFIG_DIR/worker.log"
+echo "  tail -f $LOG_DIR/worker.log"
 echo ""
 '''
 

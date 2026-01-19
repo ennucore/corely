@@ -16,8 +16,8 @@ use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 #[derive(Parser, Debug)]
-#[command(name = "corely")]
-#[command(about = "Corely remote worker agent", long_about = None)]
+#[command(name = "corely-worker")]
+#[command(version, about = "Corely remote worker agent", long_about = None)]
 struct Args {
     /// Server WebSocket URL (e.g., ws://localhost:8000/ws/worker)
     #[arg(short, long, required_unless_present_any = ["uninstall", "request_permissions"])]

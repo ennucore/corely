@@ -567,6 +567,20 @@ async def download_binary(binary_name: str):
     )
 
 
+@router.get("/worker/version", response_class=PlainTextResponse)
+async def get_worker_version():
+    """
+    Get the current stable worker version.
+    Used by workers to check if an update is available.
+    """
+    version_file = BINARIES_DIR / "VERSION"
+    if version_file.exists():
+        return version_file.read_text().strip()
+
+    # Default version if no VERSION file exists
+    return "0.1.0"
+
+
 # ============================================================================
 # Worker Management Routes
 # ============================================================================
