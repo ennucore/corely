@@ -205,6 +205,88 @@ class Storage:
         )
         await self._db.commit()
 
+    # User management methods
+    async def get_all_users(self) -> list[dict]:
+        """Get all users."""
+        async with self._db.execute("SELECT * FROM users") as cursor:
+            rows = await cursor.fetchall()
+            result = []
+            for row in rows:
+                item = dict(row)
+                item["scopes"] = json.loads(item["scopes"])
+                item["disabled"] = bool(item["disabled"])
+                result.append(item)
+            return result
+
+    async def get_user(self, username: str) -> Optional[dict]:
+        """Get a user by username."""
+        async with self._db.execute(
+            "SELECT * FROM users WHERE username = ?", (username,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                result = dict(row)
+                result["scopes"] = json.loads(result["scopes"])
+                result["disabled"] = bool(result["disabled"])
+                return result
+            return None
+
+    async def create_user(self, user: dict):
+        """Create a new user."""
+        now = datetime.utcnow().isoformat()
+        scopes_json = json.dumps(user.get("scopes", ["read", "write"]))
+
+        await self._db.execute(
+            """
+            INSERT INTO users (username, hashed_password, disabled, scopes, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (user["username"], user["hashed_password"], int(user.get("disabled", False)), scopes_json, now),
+        )
+        await self._db.commit()
+
+    async def update_user_password(self, username: str, hashed_password: str):
+        """Update a user's password."""
+        await self._db.execute(
+            "UPDATE users SET hashed_password = ? WHERE username = ?",
+            (hashed_password, username),
+        )
+        await self._db.commit()
+
+    async def update_username(self, old_username: str, new_username: str):
+        """Update a user's username."""
+        await self._db.execute(
+            "UPDATE users SET username = ? WHERE username = ?",
+            (new_username, old_username),
+        )
+        await self._db.commit()
+
+    async def delete_user(self, username: str):
+        """Delete a user."""
+        await self._db.execute("DELETE FROM users WHERE username = ?", (username,))
+        await self._db.commit()
+
 
 # Global storage instance
 storage = Storage()
+
+
+# Convenience functions for module-level access
+async def get_all_users() -> list[dict]:
+    return await storage.get_all_users()
+
+
+async def get_user(username: str) -> Optional[dict]:
+    return await storage.get_user(username)
+
+
+async def create_user(user: dict):
+    return await storage.create_user(user)
+
+
+async def update_user_password(username: str, hashed_password: str):
+    return await storage.update_user_password(username, hashed_password)
+
+
+async def update_username(old_username: str, new_username: str):
+    return await storage.update_username(old_username, new_username)

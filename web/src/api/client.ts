@@ -228,6 +228,21 @@ class CorelyAPI {
   getMcpUrl(): string {
     return `${getServerBaseUrl()}/api/mcp/sse`
   }
+
+  // Account Management
+  async changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    await this.fetch('/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    })
+  }
+
+  async changeUsername(newUsername: string): Promise<{ new_username: string; access_token: string }> {
+    return this.fetch('/auth/change-username', {
+      method: 'POST',
+      body: JSON.stringify({ new_username: newUsername }),
+    })
+  }
 }
 
 export const api = new CorelyAPI()

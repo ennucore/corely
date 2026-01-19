@@ -7,6 +7,7 @@ interface AuthContextType {
   user: { username: string; scopes: string[] } | null
   login: (username: string, password: string) => Promise<void>
   logout: () => void
+  setToken: (token: string) => void
 }
 
 export const AuthContext = createContext<AuthContextType | null>(null)
@@ -55,5 +56,15 @@ export function useAuthProvider() {
     setIsAuthenticated(false)
   }
 
-  return { isAuthenticated, isLoading, user, login, logout }
+  const setToken = async (token: string) => {
+    api.setToken(token)
+    try {
+      const userData = await api.getMe()
+      setUser(userData)
+    } catch {
+      // Token might be invalid, but we set it anyway
+    }
+  }
+
+  return { isAuthenticated, isLoading, user, login, logout, setToken }
 }

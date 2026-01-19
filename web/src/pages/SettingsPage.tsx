@@ -8,14 +8,23 @@ import { useAuth } from '../hooks/useAuth'
 
 export function SettingsPage() {
   const navigate = useNavigate()
-  const { user, logout } = useAuth()
+  const { user, logout, setToken } = useAuth()
   const [clients, setClients] = useState<OAuthClient[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [newClientName, setNewClientName] = useState('')
   const [createdClient, setCreatedClient] = useState<OAuthClient | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
+
+  // Account settings
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [newUsername, setNewUsername] = useState('')
+  const [isChangingPassword, setIsChangingPassword] = useState(false)
+  const [isChangingUsername, setIsChangingUsername] = useState(false)
 
   const mcpUrl = api.getMcpUrl()
 
@@ -64,6 +73,55 @@ export function SettingsPage() {
     navigator.clipboard.writeText(text)
     setCopied(key)
     setTimeout(() => setCopied(null), 2000)
+  }
+
+  const handleChangePassword = async () => {
+    if (newPassword !== confirmPassword) {
+      setError('Passwords do not match')
+      return
+    }
+    if (newPassword.length < 4) {
+      setError('Password must be at least 4 characters')
+      return
+    }
+
+    setIsChangingPassword(true)
+    setError('')
+    setSuccess('')
+
+    try {
+      await api.changePassword(currentPassword, newPassword)
+      setSuccess('Password changed successfully')
+      setCurrentPassword('')
+      setNewPassword('')
+      setConfirmPassword('')
+    } catch (err: any) {
+      setError(err.message || 'Failed to change password')
+    } finally {
+      setIsChangingPassword(false)
+    }
+  }
+
+  const handleChangeUsername = async () => {
+    if (!newUsername.trim()) {
+      setError('Username cannot be empty')
+      return
+    }
+
+    setIsChangingUsername(true)
+    setError('')
+    setSuccess('')
+
+    try {
+      const result = await api.changeUsername(newUsername.trim())
+      setToken(result.access_token)
+      setSuccess(`Username changed to ${result.new_username}`)
+      setNewUsername('')
+    } catch (err: any) {
+      setError(err.message || 'Failed to change username')
+    } finally {
+      setIsChangingUsername(false)
+    }
   }
 
   return (
@@ -199,6 +257,140 @@ export function SettingsPage() {
             </div>
           </div>
         </CRTFrame>
+
+        {/* Account Settings */}
+        <CRTFrame
+          title="ACCOUNT SETTINGS"
+          subtitle="Change username and password"
+          status="online"
+          style={{ marginBottom: 24 }}
+        >
+          <div style={{ padding: 16, display: 'grid', gap: 24 }}>
+            {/* Change Username */}
+            <div>
+              <h3 style={{
+                fontFamily: 'VT323, monospace',
+                fontSize: '16px',
+                color: colors.cyan,
+                marginBottom: 12,
+              }}>
+                CHANGE USERNAME
+              </h3>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+              }}>
+                <input
+                  type="text"
+                  placeholder={`Current: ${user?.username || 'unknown'}`}
+                  value={newUsername}
+                  onChange={(e) => setNewUsername(e.target.value)}
+                  style={{
+                    flex: 1,
+                    background: colors.void,
+                    border: `1px solid ${colors.textMuted}`,
+                    color: colors.textPrimary,
+                    padding: '10px 14px',
+                    fontFamily: 'Share Tech Mono, monospace',
+                    fontSize: '13px',
+                  }}
+                />
+                <GlowButton
+                  size="small"
+                  variant="cyan"
+                  onClick={handleChangeUsername}
+                  disabled={isChangingUsername || !newUsername.trim()}
+                >
+                  {isChangingUsername ? 'CHANGING...' : 'UPDATE'}
+                </GlowButton>
+              </div>
+            </div>
+
+            {/* Change Password */}
+            <div>
+              <h3 style={{
+                fontFamily: 'VT323, monospace',
+                fontSize: '16px',
+                color: colors.cyan,
+                marginBottom: 12,
+              }}>
+                CHANGE PASSWORD
+              </h3>
+              <div style={{
+                display: 'grid',
+                gap: 12,
+              }}>
+                <input
+                  type="password"
+                  placeholder="Current password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  style={{
+                    background: colors.void,
+                    border: `1px solid ${colors.textMuted}`,
+                    color: colors.textPrimary,
+                    padding: '10px 14px',
+                    fontFamily: 'Share Tech Mono, monospace',
+                    fontSize: '13px',
+                  }}
+                />
+                <input
+                  type="password"
+                  placeholder="New password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  style={{
+                    background: colors.void,
+                    border: `1px solid ${colors.textMuted}`,
+                    color: colors.textPrimary,
+                    padding: '10px 14px',
+                    fontFamily: 'Share Tech Mono, monospace',
+                    fontSize: '13px',
+                  }}
+                />
+                <input
+                  type="password"
+                  placeholder="Confirm new password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  style={{
+                    background: colors.void,
+                    border: `1px solid ${colors.textMuted}`,
+                    color: colors.textPrimary,
+                    padding: '10px 14px',
+                    fontFamily: 'Share Tech Mono, monospace',
+                    fontSize: '13px',
+                  }}
+                />
+                <div>
+                  <GlowButton
+                    size="small"
+                    variant="green"
+                    onClick={handleChangePassword}
+                    disabled={isChangingPassword || !currentPassword || !newPassword || !confirmPassword}
+                  >
+                    {isChangingPassword ? 'CHANGING...' : 'CHANGE PASSWORD'}
+                  </GlowButton>
+                </div>
+              </div>
+            </div>
+          </div>
+        </CRTFrame>
+
+        {/* Success display */}
+        {success && (
+          <div style={{
+            background: `${colors.green}22`,
+            border: `1px solid ${colors.green}`,
+            padding: '16px 20px',
+            marginBottom: 24,
+            color: colors.green,
+            fontSize: '13px',
+          }}>
+            {success}
+          </div>
+        )}
 
         {/* Error display */}
         {error && (

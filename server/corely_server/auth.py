@@ -1,7 +1,9 @@
 """Authentication and authorization for Corely server."""
 
+import os
 import secrets
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 import bcrypt
@@ -10,12 +12,34 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from pydantic import BaseModel
 
-# Configuration - in production, load from environment
-SECRET_KEY = secrets.token_urlsafe(32)
+# Configuration
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
-WORKER_TOKEN = "corely-worker-secret"  # Pre-shared token for workers
-PENDING_TOKEN_EXPIRE_MINUTES = 5  # Short-lived token for 2FA flow
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days for better UX
+WORKER_TOKEN = os.environ.get("CORELY_WORKER_TOKEN", "corely-worker-secret")
+PENDING_TOKEN_EXPIRE_MINUTES = 5
+
+# Persistent SECRET_KEY - load from env or file
+def _get_secret_key() -> str:
+    # Try environment variable first
+    if key := os.environ.get("CORELY_SECRET_KEY"):
+        return key
+
+    # Try to load from file
+    key_file = Path("/opt/corely/secret.key")
+    if not key_file.exists():
+        key_file = Path.home() / ".config" / "corely" / "secret.key"
+
+    if key_file.exists():
+        return key_file.read_text().strip()
+
+    # Generate and save a new key
+    key = secrets.token_urlsafe(32)
+    key_file.parent.mkdir(parents=True, exist_ok=True)
+    key_file.write_text(key)
+    key_file.chmod(0o600)
+    return key
+
+SECRET_KEY = _get_secret_key()
 
 security = HTTPBearer()
 
@@ -24,6 +48,10 @@ GERMAN_DAYS = ["montag", "dienstag", "mittwoch", "donnerstag", "freitag", "samst
 
 # Store pending auth tokens (in production, use Redis or similar)
 _pending_tokens: dict[str, dict] = {}
+
+# User database - loaded from storage
+_users_db: dict[str, dict] = {}
+_users_loaded = False
 
 
 class Token(BaseModel):
@@ -50,35 +78,84 @@ def get_password_hash(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
-# In-memory user store - in production use database
-# Hash is pre-computed for "admin" password
-USERS_DB = {
-    "admin": {
-        "username": "admin",
-        "hashed_password": get_password_hash("admin"),  # Change in production!
-        "disabled": False,
-        "scopes": ["read", "write", "admin"],
-    }
-}
+async def _ensure_users_loaded():
+    """Load users from database if not already loaded."""
+    global _users_db, _users_loaded
+    if _users_loaded:
+        return
+
+    from . import storage
+    users = await storage.get_all_users()
+    _users_db = {u["username"]: u for u in users}
+
+    # Create default admin if no users exist
+    if not _users_db:
+        default_user = {
+            "username": "llev",
+            "hashed_password": get_password_hash("admin"),
+            "disabled": False,
+            "scopes": ["read", "write", "admin"],
+        }
+        await storage.create_user(default_user)
+        _users_db["llev"] = default_user
+
+    _users_loaded = True
 
 
-def get_user(username: str) -> Optional[User]:
-    if username in USERS_DB:
-        user_dict = USERS_DB[username]
+def _reload_users():
+    """Force reload users on next access."""
+    global _users_loaded
+    _users_loaded = False
+
+
+async def get_user(username: str) -> Optional[User]:
+    await _ensure_users_loaded()
+    if username in _users_db:
+        user_dict = _users_db[username]
         return User(**user_dict)
     return None
 
 
-def authenticate_user(username: str, password: str) -> Optional[User]:
-    user = get_user(username)
+async def authenticate_user(username: str, password: str) -> Optional[User]:
+    user = await get_user(username)
     if not user:
         return None
-    user_data = USERS_DB.get(username)
+    user_data = _users_db.get(username)
     if not user_data:
         return None
     if not verify_password(password, user_data["hashed_password"]):
         return None
     return user
+
+
+async def change_password(username: str, new_password: str) -> bool:
+    """Change a user's password."""
+    from . import storage
+
+    await _ensure_users_loaded()
+    if username not in _users_db:
+        return False
+
+    hashed = get_password_hash(new_password)
+    await storage.update_user_password(username, hashed)
+    _users_db[username]["hashed_password"] = hashed
+    return True
+
+
+async def change_username(old_username: str, new_username: str) -> bool:
+    """Change a user's username."""
+    from . import storage
+
+    await _ensure_users_loaded()
+    if old_username not in _users_db:
+        return False
+    if new_username in _users_db:
+        return False  # Username already taken
+
+    await storage.update_username(old_username, new_username)
+    _users_db[new_username] = _users_db.pop(old_username)
+    _users_db[new_username]["username"] = new_username
+    return True
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
@@ -111,7 +188,7 @@ async def get_current_user(
     except JWTError:
         raise credentials_exception
 
-    user = get_user(token_data.username)
+    user = await get_user(token_data.username)
     if user is None:
         raise credentials_exception
     if user.disabled:

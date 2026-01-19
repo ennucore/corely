@@ -121,6 +121,64 @@ async def get_me(current_user: User = Depends(get_current_user)):
     return current_user
 
 
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class UsernameChangeRequest(BaseModel):
+    new_username: str
+
+
+@router.post("/auth/change-password")
+async def change_password_route(
+    request: PasswordChangeRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Change the current user's password."""
+    from .auth import authenticate_user, change_password
+
+    # Verify current password
+    user = await authenticate_user(current_user.username, request.current_password)
+    if not user:
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+    # Change password
+    success = await change_password(current_user.username, request.new_password)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to change password")
+
+    return {"message": "Password changed successfully"}
+
+
+@router.post("/auth/change-username")
+async def change_username_route(
+    request: UsernameChangeRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Change the current user's username."""
+    from .auth import change_username
+
+    if request.new_username == current_user.username:
+        return {"message": "Username unchanged"}
+
+    success = await change_username(current_user.username, request.new_username)
+    if not success:
+        raise HTTPException(status_code=400, detail="Username already taken or invalid")
+
+    # Generate new token with new username
+    access_token = create_access_token(
+        data={"sub": request.new_username, "scopes": current_user.scopes}
+    )
+
+    return {
+        "message": "Username changed successfully",
+        "new_username": request.new_username,
+        "access_token": access_token,
+        "token_type": "bearer",
+    }
+
+
 # ============================================================================
 # OAuth Client Management Routes
 # ============================================================================
