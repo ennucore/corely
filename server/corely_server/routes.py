@@ -100,7 +100,7 @@ async def verify_2fa(request: VerifyRequest):
 
     # Get user and create access token
     from .auth import get_user
-    user = get_user(username)
+    user = await get_user(username)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
