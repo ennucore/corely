@@ -94,7 +94,27 @@ async fn linux_capture(_display_id: Option<u32>) -> Result<Value> {
 
     let temp_path = "/tmp/corely_screenshot.png";
 
-    // Try different screenshot tools
+    // Remove any existing screenshot file
+    let _ = fs::remove_file(temp_path);
+
+    // First, try to find a graphical session and capture via Wayland/KDE tools
+    // This is needed when running as root to capture from user's desktop
+    if let Ok(result) = try_wayland_capture(temp_path) {
+        if result {
+            if let Ok(data) = fs::read(temp_path) {
+                let _ = fs::remove_file(temp_path);
+                let base64_data = BASE64.encode(&data);
+                return Ok(json!({
+                    "width": 0,
+                    "height": 0,
+                    "format": "png",
+                    "data": base64_data,
+                }));
+            }
+        }
+    }
+
+    // Fall back to X11 screenshot tools
     let tools = [
         ("gnome-screenshot", vec!["-f", temp_path]),
         ("scrot", vec![temp_path]),
@@ -110,7 +130,7 @@ async fn linux_capture(_display_id: Option<u32>) -> Result<Value> {
     }
 
     if !success {
-        return Err(anyhow!("No screenshot tool available (tried gnome-screenshot, scrot, import)"));
+        return Err(anyhow!("No screenshot tool available (tried spectacle, gnome-screenshot, scrot, import)"));
     }
 
     let data = fs::read(temp_path)?;
@@ -124,6 +144,110 @@ async fn linux_capture(_display_id: Option<u32>) -> Result<Value> {
         "format": "png",
         "data": base64_data,
     }))
+}
+
+#[cfg(target_os = "linux")]
+fn try_wayland_capture(temp_path: &str) -> Result<bool> {
+    // Find users with graphical sessions using loginctl
+    let output = Command::new("loginctl")
+        .args(["list-sessions", "--no-legend"])
+        .output()?;
+
+    if !output.status.success() {
+        return Ok(false);
+    }
+
+    let sessions_output = String::from_utf8_lossy(&output.stdout);
+
+    // Parse session info and find graphical sessions
+    for line in sessions_output.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 3 {
+            continue;
+        }
+
+        let session_id = parts[0];
+        let uid: u32 = parts[1].parse().unwrap_or(0);
+        let username = parts[2];
+
+        // Skip root sessions
+        if uid == 0 {
+            continue;
+        }
+
+        // Check if this is a graphical session
+        let session_type = Command::new("loginctl")
+            .args(["show-session", session_id, "-p", "Type", "--value"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+
+        if session_type != "wayland" && session_type != "x11" {
+            continue;
+        }
+
+        debug!("Found graphical session: {} for user {} (type: {})", session_id, username, session_type);
+
+        // Try to capture using spectacle (KDE) as this user
+        let runtime_dir = format!("/run/user/{}", uid);
+        let dbus_addr = format!("unix:path={}/bus", runtime_dir);
+
+        // Build environment for the screenshot command
+        let env_vars = format!(
+            "XDG_RUNTIME_DIR={} DBUS_SESSION_BUS_ADDRESS={} QT_QPA_PLATFORM=wayland WAYLAND_DISPLAY=wayland-0",
+            runtime_dir, dbus_addr
+        );
+
+        // Try spectacle (KDE)
+        let spectacle_result = Command::new("sudo")
+            .args([
+                "-u", username,
+                "bash", "-c",
+                &format!("{} spectacle -bn -o {}", env_vars, temp_path)
+            ])
+            .output();
+
+        if let Ok(output) = spectacle_result {
+            if output.status.success() && std::path::Path::new(temp_path).exists() {
+                debug!("spectacle capture succeeded");
+                return Ok(true);
+            }
+        }
+
+        // Try gnome-screenshot for GNOME Wayland
+        let gnome_result = Command::new("sudo")
+            .args([
+                "-u", username,
+                "bash", "-c",
+                &format!("{} gnome-screenshot -f {}", env_vars, temp_path)
+            ])
+            .output();
+
+        if let Ok(output) = gnome_result {
+            if output.status.success() && std::path::Path::new(temp_path).exists() {
+                debug!("gnome-screenshot capture succeeded");
+                return Ok(true);
+            }
+        }
+
+        // Try grim for wlroots-based compositors
+        let grim_result = Command::new("sudo")
+            .args([
+                "-u", username,
+                "bash", "-c",
+                &format!("{} grim {}", env_vars, temp_path)
+            ])
+            .output();
+
+        if let Ok(output) = grim_result {
+            if output.status.success() && std::path::Path::new(temp_path).exists() {
+                debug!("grim capture succeeded");
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
 }
 
 #[cfg(target_os = "windows")]
