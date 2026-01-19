@@ -138,8 +138,12 @@ async fn connect_and_handle(
     token: &str,
     state: Arc<Mutex<WorkerState>>,
 ) -> Result<()> {
-    let url = format!("{}?token={}", server_url, token);
-    info!("Connecting to {}", server_url);
+    // Convert http(s):// to ws(s)://
+    let ws_url = server_url
+        .replace("https://", "wss://")
+        .replace("http://", "ws://");
+    let url = format!("{}?token={}", ws_url, token);
+    info!("Connecting to {}", ws_url);
 
     let (ws_stream, _) = connect_async(&url).await?;
     info!("WebSocket connected");
