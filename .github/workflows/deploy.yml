@@ -1,0 +1,116 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+env:
+  SERVER_HOST: 5.78.148.54
+  SERVER_USER: root
+
+jobs:
+  build-worker:
+    name: Build Worker (${{ matrix.artifact }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: corely-worker-linux-x86_64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact: corely-worker-macos-x86_64
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact: corely-worker-macos-aarch64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Build
+        working-directory: worker
+        run: cargo build --release
+
+      - name: Rename binary
+        run: cp worker/target/release/corely-worker ${{ matrix.artifact }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: build-worker
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all worker binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: binaries
+          merge-multiple: true
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ env.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Web UI
+        working-directory: web
+        run: |
+          npm ci
+          VITE_API_URL=/api npm run build
+
+      - name: Deploy
+        run: |
+          # Upload worker binaries
+          scp binaries/* ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }}:/opt/corely/binaries/
+
+          # Sync server code
+          rsync -avz --delete \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='target' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            --exclude='.venv' \
+            --exclude='venv' \
+            --exclude='*.egg-info' \
+            --exclude='*.db' \
+            server/ ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }}:/opt/corely/server/
+
+          # Sync client code
+          rsync -avz --delete \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            --exclude='*.egg-info' \
+            client/ ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }}:/opt/corely/client/
+
+          # Upload web build
+          rsync -avz --delete web/dist/ ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }}:/opt/corely/web/dist/
+
+          # Restart services
+          ssh ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << 'ENDSSH'
+            cd /opt/corely/server
+            source venv/bin/activate
+            pip install -e . --quiet
+            systemctl restart corely
+            echo "Deployed at $(date)"
+          ENDSSH

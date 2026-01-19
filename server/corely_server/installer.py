@@ -336,6 +336,34 @@ EOF
     esac
 }}
 
+# Request macOS permissions
+request_macos_permissions() {{
+    echo -e "${{BLUE}}Requesting macOS permissions...${{NC}}"
+    echo "The worker needs the following permissions to function:"
+    echo "  - Screen Recording (for screen capture)"
+    echo "  - Accessibility (for input control)"
+    echo ""
+    echo "System permission dialogs will appear. Please grant access."
+    echo ""
+
+    # Trigger Screen Recording permission by attempting a screenshot
+    echo -e "${{BLUE}}Requesting Screen Recording permission...${{NC}}"
+    "$BINARY_PATH" --request-permissions 2>/dev/null &
+    PERM_PID=$!
+    sleep 3
+    kill $PERM_PID 2>/dev/null || true
+
+    # Open System Preferences to the right pane
+    echo ""
+    echo -e "${{YELLOW}}If permission dialogs didn't appear, please manually grant access:${{NC}}"
+    echo "  System Settings > Privacy & Security > Screen Recording"
+    echo "  System Settings > Privacy & Security > Accessibility"
+    echo ""
+    echo -n "Press Enter once you've granted permissions... "
+    read -r < /dev/tty
+    echo ""
+}}
+
 # Ask about autostart
 echo ""
 echo -n "Do you want to set up autostart? [Y/n] "
@@ -346,6 +374,10 @@ case "$AUTOSTART_RESPONSE" in
         echo -e "${{YELLOW}}Skipping autostart setup${{NC}}"
         ;;
     *)
+        # Request permissions on macOS before starting
+        if [ "$(uname -s)" = "Darwin" ]; then
+            request_macos_permissions
+        fi
         setup_autostart
         ;;
 esac

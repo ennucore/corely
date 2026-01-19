@@ -20,11 +20,11 @@ use tracing_subscriber::FmtSubscriber;
 #[command(about = "Corely remote worker agent", long_about = None)]
 struct Args {
     /// Server WebSocket URL (e.g., ws://localhost:8000/ws/worker)
-    #[arg(short, long, required_unless_present = "uninstall")]
+    #[arg(short, long, required_unless_present_any = ["uninstall", "request_permissions"])]
     server: Option<String>,
 
     /// Authentication token
-    #[arg(short, long, required_unless_present = "uninstall")]
+    #[arg(short, long, required_unless_present_any = ["uninstall", "request_permissions"])]
     token: Option<String>,
 
     /// Install as system service and request permissions
@@ -34,6 +34,10 @@ struct Args {
     /// Completely uninstall the worker from this system
     #[arg(long)]
     uninstall: bool,
+
+    /// Request macOS permissions (Screen Recording, Accessibility)
+    #[arg(long)]
+    request_permissions: bool,
 
     /// Path to external tools/plugins directory
     #[arg(long)]
@@ -69,7 +73,14 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Get required args (safe to unwrap since clap enforces them unless uninstall)
+    // Handle request-permissions command (macOS)
+    if args.request_permissions {
+        info!("Requesting system permissions...");
+        request_permissions().await?;
+        return Ok(());
+    }
+
+    // Get required args (safe to unwrap since clap enforces them unless uninstall/request-permissions)
     let server = args.server.expect("server is required");
     let token = args.token.expect("token is required");
 
@@ -101,4 +112,54 @@ async fn main() -> anyhow::Result<()> {
 
     // Start connection loop
     connection::run(&server, &token, &worker_name, plugins).await
+}
+
+/// Request macOS permissions by triggering the relevant APIs.
+/// This will cause macOS to show permission dialogs.
+async fn request_permissions() -> anyhow::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+
+        println!("Requesting Screen Recording permission...");
+        // Trigger Screen Recording by attempting a screenshot
+        let _ = Command::new("screencapture")
+            .args(["-x", "-t", "png", "/tmp/corely_perm_test.png"])
+            .output();
+        let _ = std::fs::remove_file("/tmp/corely_perm_test.png");
+        println!("  → Screen Recording permission requested.");
+        println!("     If a dialog appeared, please grant access.");
+        println!();
+
+        println!("Requesting Accessibility permission...");
+        // Trigger Accessibility by attempting to use input simulation
+        // This will show the permission dialog if not already granted
+        use enigo::{Enigo, Settings};
+        match Enigo::new(&Settings::default()) {
+            Ok(_) => {
+                println!("  → Accessibility permission requested.");
+                println!("     If a dialog appeared, please grant access.");
+            }
+            Err(e) => {
+                println!("  → Accessibility permission required.");
+                println!("     Error: {:?}", e);
+                println!("     Please grant access in System Settings > Privacy & Security > Accessibility");
+            }
+        }
+        println!();
+
+        println!("If permission dialogs did not appear, please manually grant access:");
+        println!("  System Settings > Privacy & Security > Screen Recording");
+        println!("  System Settings > Privacy & Security > Accessibility");
+        println!();
+        println!("After granting permissions, restart the worker.");
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        println!("Permission request is only needed on macOS.");
+        println!("On other platforms, the worker should work without additional permissions.");
+    }
+
+    Ok(())
 }
