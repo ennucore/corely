@@ -65,7 +65,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
 
     Returns a pending_token that must be verified with 2FA code.
     """
-    user = authenticate_user(form_data.username, form_data.password)
+    user = await authenticate_user(form_data.username, form_data.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
