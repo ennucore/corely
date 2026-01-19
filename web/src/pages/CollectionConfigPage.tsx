@@ -110,8 +110,10 @@ export function CollectionConfigPage() {
     setSuccess('')
     try {
       await api.setCollectionConfig(id, config)
-      setSuccess('Configuration saved')
-      setTimeout(() => setSuccess(''), 3000)
+      // Reload status since collection auto-starts/stops based on config
+      await loadStatus()
+      setSuccess('Configuration saved - collection will auto-start/stop based on enabled features')
+      setTimeout(() => setSuccess(''), 5000)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save configuration')
     } finally {
@@ -119,25 +121,13 @@ export function CollectionConfigPage() {
     }
   }
 
-  const handleStart = async () => {
-    if (!id) return
-    try {
-      await api.startCollection(id)
-      loadStatus()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to start collection')
-    }
-  }
-
-  const handleStop = async () => {
-    if (!id) return
-    try {
-      await api.stopCollection(id)
-      loadStatus()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to stop collection')
-    }
-  }
+  // Check if any collection feature is enabled
+  const anyCollectionEnabled = config.screen.enabled ||
+    config.camera.enabled ||
+    config.audio_input.enabled ||
+    config.audio_output.enabled ||
+    config.input_logging.enabled ||
+    (config.directory_sync.paths && config.directory_sync.paths.length > 0)
 
   const tabStyle = (tab: Tab) => ({
     fontFamily: 'VT323, monospace',
@@ -247,16 +237,14 @@ export function CollectionConfigPage() {
                   </span>
                 )}
               </div>
-              <div style={{ display: 'flex', gap: '15px' }}>
-                {!status?.is_collecting ? (
-                  <GlowButton onClick={handleStart} variant="green" disabled={!worker?.is_online}>
-                    START COLLECTION
-                  </GlowButton>
-                ) : (
-                  <GlowButton onClick={handleStop} variant="red">
-                    STOP COLLECTION
-                  </GlowButton>
-                )}
+              <div style={{
+                fontFamily: 'VT323, monospace',
+                fontSize: '14px',
+                color: colors.textSecondary,
+              }}>
+                {anyCollectionEnabled
+                  ? 'Collection is active when features are enabled'
+                  : 'Enable features below to start collection'}
               </div>
             </div>
             {!worker?.is_online && (
@@ -266,7 +254,7 @@ export function CollectionConfigPage() {
                 color: colors.amber,
                 marginTop: '10px',
               }}>
-                Worker is offline. Collection controls will be available when the worker reconnects.
+                Worker is offline. Changes will take effect when the worker reconnects.
               </div>
             )}
           </div>

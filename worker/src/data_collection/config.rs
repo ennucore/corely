@@ -61,6 +61,18 @@ impl Default for CollectionConfig {
     }
 }
 
+impl CollectionConfig {
+    /// Check if any data collection feature is enabled
+    pub fn any_enabled(&self) -> bool {
+        self.screen.enabled
+            || self.camera.enabled
+            || self.audio_input.enabled
+            || self.audio_output.enabled
+            || self.input_logging.enabled
+            || !self.directory_sync.paths.is_empty()
+    }
+}
+
 /// Screen capture configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScreenConfig {

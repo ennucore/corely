@@ -233,8 +233,27 @@ impl OrchestratorRefs {
 /// JSON-RPC handlers for collection commands
 pub async fn handle_update_config(params: Value, orchestrator: &CollectionOrchestrator) -> Result<Value> {
     let config: CollectionConfig = serde_json::from_value(params)?;
+    let should_collect = config.any_enabled();
+    let current_status = orchestrator.get_status().await;
+
+    // Update the config first
     orchestrator.update_config(config).await?;
-    Ok(json!({"status": "ok"}))
+
+    // Auto-start/stop based on config
+    if should_collect && !current_status.is_collecting {
+        tracing::info!("Config has collection enabled - starting collection automatically");
+        orchestrator.start().await?;
+    } else if !should_collect && current_status.is_collecting {
+        tracing::info!("Config has no collection enabled - stopping collection automatically");
+        orchestrator.stop().await?;
+    }
+
+    let new_status = orchestrator.get_status().await;
+    Ok(json!({
+        "status": "ok",
+        "is_collecting": new_status.is_collecting,
+        "session_id": new_status.session_id,
+    }))
 }
 
 pub async fn handle_start(orchestrator: &CollectionOrchestrator) -> Result<Value> {
