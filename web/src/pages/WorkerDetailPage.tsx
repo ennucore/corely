@@ -134,6 +134,9 @@ export function WorkerDetailPage() {
           <GlowButton size="small" onClick={() => navigate('/')}>
             ← BACK
           </GlowButton>
+          <GlowButton size="small" color="magenta" onClick={() => navigate(`/worker/${id}/collection`)}>
+            DATA COLLECTION
+          </GlowButton>
           <div>
             <div style={{
               fontFamily: 'VT323, monospace',

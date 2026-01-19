@@ -58,6 +58,53 @@ class Storage:
                 last_used TEXT,
                 is_active INTEGER DEFAULT 1
             );
+
+            -- Per-worker collection configuration
+            CREATE TABLE IF NOT EXISTS collection_configs (
+                worker_id TEXT PRIMARY KEY,
+                config_json TEXT NOT NULL,
+                encryption_public_key TEXT,
+                use_infrequent_access INTEGER DEFAULT 0,
+                updated_at TEXT NOT NULL
+            );
+
+            -- Collection session tracking
+            CREATE TABLE IF NOT EXISTS collection_sessions (
+                session_id TEXT PRIMARY KEY,
+                worker_id TEXT NOT NULL,
+                started_at TEXT,
+                ended_at TEXT,
+                status TEXT DEFAULT 'active',
+                total_chunks INTEGER DEFAULT 0,
+                FOREIGN KEY (worker_id) REFERENCES workers(id)
+            );
+
+            -- Chunk metadata
+            CREATE TABLE IF NOT EXISTS collection_chunks (
+                chunk_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                worker_id TEXT NOT NULL,
+                chunk_index INTEGER,
+                start_timestamp INTEGER,
+                end_timestamp INTEGER,
+                local_path TEXT,
+                r2_path TEXT,
+                size_bytes INTEGER,
+                encrypted INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'recording',
+                FOREIGN KEY (session_id) REFERENCES collection_sessions(session_id),
+                FOREIGN KEY (worker_id) REFERENCES workers(id)
+            );
+
+            -- R2 storage credentials (encrypted)
+            CREATE TABLE IF NOT EXISTS r2_config (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                endpoint TEXT,
+                access_key_encrypted TEXT,
+                secret_key_encrypted TEXT,
+                bucket_normal TEXT,
+                bucket_infrequent TEXT
+            );
         """
         )
         await self._db.commit()
@@ -264,6 +311,256 @@ class Storage:
     async def delete_user(self, username: str):
         """Delete a user."""
         await self._db.execute("DELETE FROM users WHERE username = ?", (username,))
+        await self._db.commit()
+
+    # Collection config methods
+    async def get_collection_config(self, worker_id: str) -> Optional[dict]:
+        """Get collection config for a worker."""
+        async with self._db.execute(
+            "SELECT * FROM collection_configs WHERE worker_id = ?", (worker_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                result = dict(row)
+                result["config"] = json.loads(result["config_json"])
+                return result
+            return None
+
+    async def upsert_collection_config(
+        self,
+        worker_id: str,
+        config: dict,
+        encryption_public_key: Optional[str] = None,
+        use_infrequent_access: bool = False,
+    ):
+        """Insert or update collection config for a worker."""
+        now = datetime.utcnow().isoformat()
+        config_json = json.dumps(config)
+
+        await self._db.execute(
+            """
+            INSERT INTO collection_configs (worker_id, config_json, encryption_public_key, use_infrequent_access, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(worker_id) DO UPDATE SET
+                config_json = excluded.config_json,
+                encryption_public_key = COALESCE(excluded.encryption_public_key, collection_configs.encryption_public_key),
+                use_infrequent_access = excluded.use_infrequent_access,
+                updated_at = excluded.updated_at
+            """,
+            (worker_id, config_json, encryption_public_key, int(use_infrequent_access), now),
+        )
+        await self._db.commit()
+
+    async def set_encryption_key(self, worker_id: str, public_key: str):
+        """Set encryption public key for a worker."""
+        now = datetime.utcnow().isoformat()
+        await self._db.execute(
+            """
+            UPDATE collection_configs SET encryption_public_key = ?, updated_at = ?
+            WHERE worker_id = ?
+            """,
+            (public_key, now, worker_id),
+        )
+        await self._db.commit()
+
+    # Collection session methods
+    async def create_collection_session(self, session_id: str, worker_id: str) -> dict:
+        """Create a new collection session."""
+        now = datetime.utcnow().isoformat()
+        await self._db.execute(
+            """
+            INSERT INTO collection_sessions (session_id, worker_id, started_at, status)
+            VALUES (?, ?, ?, 'active')
+            """,
+            (session_id, worker_id, now),
+        )
+        await self._db.commit()
+        return {"session_id": session_id, "worker_id": worker_id, "started_at": now, "status": "active"}
+
+    async def end_collection_session(self, session_id: str, total_chunks: int = 0):
+        """End a collection session."""
+        now = datetime.utcnow().isoformat()
+        await self._db.execute(
+            """
+            UPDATE collection_sessions SET ended_at = ?, status = 'completed', total_chunks = ?
+            WHERE session_id = ?
+            """,
+            (now, total_chunks, session_id),
+        )
+        await self._db.commit()
+
+    async def get_collection_session(self, session_id: str) -> Optional[dict]:
+        """Get a collection session by ID."""
+        async with self._db.execute(
+            "SELECT * FROM collection_sessions WHERE session_id = ?", (session_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def get_worker_sessions(self, worker_id: str, limit: int = 50) -> list[dict]:
+        """Get collection sessions for a worker."""
+        async with self._db.execute(
+            """
+            SELECT * FROM collection_sessions
+            WHERE worker_id = ?
+            ORDER BY started_at DESC
+            LIMIT ?
+            """,
+            (worker_id, limit),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    # Collection chunk methods
+    async def create_collection_chunk(
+        self,
+        chunk_id: str,
+        session_id: str,
+        worker_id: str,
+        chunk_index: int,
+        local_path: str,
+    ) -> dict:
+        """Create a new chunk record."""
+        now = datetime.utcnow().isoformat()
+        start_timestamp = int(datetime.utcnow().timestamp() * 1000)
+
+        await self._db.execute(
+            """
+            INSERT INTO collection_chunks
+            (chunk_id, session_id, worker_id, chunk_index, start_timestamp, local_path, status)
+            VALUES (?, ?, ?, ?, ?, ?, 'recording')
+            """,
+            (chunk_id, session_id, worker_id, chunk_index, start_timestamp, local_path),
+        )
+        await self._db.commit()
+        return {
+            "chunk_id": chunk_id,
+            "session_id": session_id,
+            "worker_id": worker_id,
+            "chunk_index": chunk_index,
+            "start_timestamp": start_timestamp,
+            "local_path": local_path,
+            "status": "recording",
+        }
+
+    async def complete_chunk(
+        self,
+        chunk_id: str,
+        size_bytes: int,
+        end_timestamp: Optional[int] = None,
+    ):
+        """Mark a chunk as complete."""
+        if end_timestamp is None:
+            end_timestamp = int(datetime.utcnow().timestamp() * 1000)
+
+        await self._db.execute(
+            """
+            UPDATE collection_chunks
+            SET end_timestamp = ?, size_bytes = ?, status = 'complete'
+            WHERE chunk_id = ?
+            """,
+            (end_timestamp, size_bytes, chunk_id),
+        )
+        await self._db.commit()
+
+    async def mark_chunk_uploaded(self, chunk_id: str, r2_path: str, encrypted: bool = False):
+        """Mark a chunk as uploaded to R2."""
+        await self._db.execute(
+            """
+            UPDATE collection_chunks
+            SET r2_path = ?, encrypted = ?, status = 'uploaded'
+            WHERE chunk_id = ?
+            """,
+            (r2_path, int(encrypted), chunk_id),
+        )
+        await self._db.commit()
+
+    async def get_chunk(self, chunk_id: str) -> Optional[dict]:
+        """Get a chunk by ID."""
+        async with self._db.execute(
+            "SELECT * FROM collection_chunks WHERE chunk_id = ?", (chunk_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def get_session_chunks(self, session_id: str) -> list[dict]:
+        """Get all chunks for a session."""
+        async with self._db.execute(
+            """
+            SELECT * FROM collection_chunks
+            WHERE session_id = ?
+            ORDER BY chunk_index ASC
+            """,
+            (session_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def get_chunks_to_upload(self, limit: int = 10) -> list[dict]:
+        """Get chunks that are complete but not yet uploaded."""
+        async with self._db.execute(
+            """
+            SELECT * FROM collection_chunks
+            WHERE status = 'complete' AND r2_path IS NULL
+            ORDER BY start_timestamp ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def get_evictable_chunks(self, limit: int = 10) -> list[dict]:
+        """Get chunks that have been uploaded and can be evicted from local cache."""
+        async with self._db.execute(
+            """
+            SELECT * FROM collection_chunks
+            WHERE status = 'uploaded' AND local_path IS NOT NULL
+            ORDER BY start_timestamp ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def clear_chunk_local_path(self, chunk_id: str):
+        """Clear the local path for an evicted chunk."""
+        await self._db.execute(
+            "UPDATE collection_chunks SET local_path = NULL WHERE chunk_id = ?",
+            (chunk_id,),
+        )
+        await self._db.commit()
+
+    # R2 config methods
+    async def get_r2_config(self) -> Optional[dict]:
+        """Get R2 configuration."""
+        async with self._db.execute("SELECT * FROM r2_config WHERE id = 1") as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def set_r2_config(
+        self,
+        endpoint: str,
+        access_key_encrypted: str,
+        secret_key_encrypted: str,
+        bucket_normal: str,
+        bucket_infrequent: Optional[str] = None,
+    ):
+        """Set R2 configuration."""
+        await self._db.execute(
+            """
+            INSERT INTO r2_config (id, endpoint, access_key_encrypted, secret_key_encrypted, bucket_normal, bucket_infrequent)
+            VALUES (1, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                endpoint = excluded.endpoint,
+                access_key_encrypted = excluded.access_key_encrypted,
+                secret_key_encrypted = excluded.secret_key_encrypted,
+                bucket_normal = excluded.bucket_normal,
+                bucket_infrequent = excluded.bucket_infrequent
+            """,
+            (endpoint, access_key_encrypted, secret_key_encrypted, bucket_normal, bucket_infrequent),
+        )
         await self._db.commit()
 
 

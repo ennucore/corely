@@ -26,6 +26,15 @@ base64 = "0.22"
 # System info
 sysinfo = "0.32"
 
+# Data collection
+scap = "0.0.8"
+cpal = "0.15.2"
+nokhwa = { version = "0.10", features = ["input-native"] }
+notify = "6.0"
+chrono = "0.4"
+sha2 = "0.10"
+tempfile = "3"
+
 # Input simulation
 enigo = { version = "0.2", features = ["serde"] }
 

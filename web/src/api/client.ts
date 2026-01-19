@@ -89,6 +89,106 @@ interface OAuthClient {
   last_used: string | null
 }
 
+// Collection types
+interface ScreenConfig {
+  enabled: boolean
+  fps: number
+  resolution: number
+  all_displays: boolean
+  display_ids: number[]
+  quality: number
+}
+
+interface CameraConfig {
+  enabled: boolean
+  fps: number
+  resolution: number
+  all_cameras: boolean
+  camera_indices: number[]
+  implies_mic: boolean
+}
+
+interface AudioInputConfig {
+  enabled: boolean
+  sample_rate: number
+  device: string | null
+}
+
+interface AudioOutputConfig {
+  enabled: boolean
+  sample_rate: number
+  device: string | null
+}
+
+interface InputLoggingConfig {
+  enabled: boolean
+  log_keystrokes: boolean
+  log_mouse_moves: boolean
+  log_mouse_clicks: boolean
+  mouse_sample_ms: number
+}
+
+interface DirectorySyncConfig {
+  paths: string[]
+  include_patterns: string[]
+  exclude_patterns: string[]
+  sync_interval_secs: number
+  max_file_size: number
+  watch_changes: boolean
+}
+
+interface CollectionConfig {
+  screen: ScreenConfig
+  camera: CameraConfig
+  audio_input: AudioInputConfig
+  audio_output: AudioOutputConfig
+  input_logging: InputLoggingConfig
+  directory_sync: DirectorySyncConfig
+  chunk_duration_secs: number
+  output_dir: string
+}
+
+interface CollectionStatus {
+  is_collecting: boolean
+  session_id: string | null
+  started_at: string | null
+  ended_at: string | null
+  chunk_count: number
+  active_streams: string[]
+  last_error: string | null
+}
+
+interface CollectionSession {
+  session_id: string
+  worker_id: string
+  started_at: string | null
+  ended_at: string | null
+  status: string
+  total_chunks: number
+}
+
+interface CollectionChunk {
+  chunk_id: string
+  session_id: string
+  worker_id: string
+  chunk_index: number
+  start_timestamp: number | null
+  end_timestamp: number | null
+  local_path: string | null
+  r2_path: string | null
+  size_bytes: number | null
+  encrypted: boolean
+  status: string
+}
+
+interface CacheStats {
+  cache_dir: string
+  max_size_bytes: number
+  current_size_bytes: number
+  usage_percent: number
+  chunk_count: number
+}
+
 class CorelyAPI {
   private token: string | null = null
 
@@ -243,7 +343,108 @@ class CorelyAPI {
       body: JSON.stringify({ new_username: newUsername }),
     })
   }
+
+  // Collection API
+  async getCollectionConfig(workerId: string): Promise<CollectionConfig> {
+    return this.fetch(`/workers/${workerId}/collection/config`)
+  }
+
+  async setCollectionConfig(workerId: string, config: CollectionConfig): Promise<CollectionConfig> {
+    return this.fetch(`/workers/${workerId}/collection/config`, {
+      method: 'PUT',
+      body: JSON.stringify(config),
+    })
+  }
+
+  async startCollection(workerId: string): Promise<{ status: string; session_id?: string }> {
+    return this.fetch(`/workers/${workerId}/collection/start`, {
+      method: 'POST',
+    })
+  }
+
+  async stopCollection(workerId: string): Promise<{ status: string }> {
+    return this.fetch(`/workers/${workerId}/collection/stop`, {
+      method: 'POST',
+    })
+  }
+
+  async getCollectionStatus(workerId: string): Promise<CollectionStatus> {
+    return this.fetch(`/workers/${workerId}/collection/status`)
+  }
+
+  async listCollectionSessions(workerId: string, limit = 50): Promise<CollectionSession[]> {
+    const data = await this.fetch<{ sessions: CollectionSession[] }>(
+      `/workers/${workerId}/collection/sessions?limit=${limit}`
+    )
+    return data.sessions
+  }
+
+  async listSessionChunks(workerId: string, sessionId: string): Promise<CollectionChunk[]> {
+    const data = await this.fetch<{ chunks: CollectionChunk[] }>(
+      `/workers/${workerId}/collection/sessions/${sessionId}/chunks`
+    )
+    return data.chunks
+  }
+
+  getChunkVideoUrl(workerId: string, chunkId: string, stream = 'display_0/video.raw'): string {
+    const token = this.getToken()
+    return `${API_BASE}/workers/${workerId}/collection/chunks/${chunkId}/video?stream=${encodeURIComponent(stream)}&token=${token}`
+  }
+
+  async setEncryptionKey(workerId: string, password: string): Promise<{ status: string; message: string }> {
+    return this.fetch(`/workers/${workerId}/collection/encryption-key`, {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    })
+  }
+
+  // Admin API for cache and R2
+  async getCacheStats(): Promise<CacheStats> {
+    return this.fetch('/admin/cache/stats')
+  }
+
+  async listCacheChunks(workerId?: string): Promise<CollectionChunk[]> {
+    const params = workerId ? `?worker_id=${workerId}` : ''
+    const data = await this.fetch<{ chunks: CollectionChunk[] }>(`/admin/cache/chunks${params}`)
+    return data.chunks
+  }
+
+  async setR2Config(
+    endpoint: string,
+    accessKey: string,
+    secretKey: string,
+    bucketNormal: string,
+    bucketInfrequent?: string
+  ): Promise<{ status: string }> {
+    return this.fetch('/admin/r2-config', {
+      method: 'PUT',
+      body: JSON.stringify({
+        endpoint,
+        access_key: accessKey,
+        secret_key: secretKey,
+        bucket_normal: bucketNormal,
+        bucket_infrequent: bucketInfrequent,
+      }),
+    })
+  }
 }
 
 export const api = new CorelyAPI()
-export type { Worker, SystemInfo, ScreenCapture, ShellResult, OAuthClient }
+export type {
+  Worker,
+  SystemInfo,
+  ScreenCapture,
+  ShellResult,
+  OAuthClient,
+  CollectionConfig,
+  ScreenConfig,
+  CameraConfig,
+  AudioInputConfig,
+  AudioOutputConfig,
+  InputLoggingConfig,
+  DirectorySyncConfig,
+  CollectionStatus,
+  CollectionSession,
+  CollectionChunk,
+  CacheStats,
+}

@@ -6,6 +6,7 @@ import { LoginPage } from './pages/LoginPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { WorkerDetailPage } from './pages/WorkerDetailPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { CollectionConfigPage } from './pages/CollectionConfigPage'
 
 // Inject global styles
 const styleSheet = document.createElement('style')
@@ -65,6 +66,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <WorkerDetailPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/worker/:id/collection"
+            element={
+              <ProtectedRoute>
+                <CollectionConfigPage />
               </ProtectedRoute>
             }
           />

@@ -998,3 +998,218 @@ async def screen_stream_websocket(
 # Need to import these for routes
 import asyncio
 from datetime import datetime
+
+
+# ============================================================================
+# Collection Routes
+# ============================================================================
+
+
+from .collection import (
+    CollectionConfig,
+    CollectionStatus,
+)
+from .collection.config_manager import config_manager
+from .collection.cache_manager import cache_manager
+from .collection.stream_handler import stream_handler
+from .collection.r2_uploader import r2_uploader
+from .collection.encryption import encryption_manager
+from .collection.models import R2ConfigRequest, EncryptionKeyRequest
+
+
+@router.get("/workers/{worker_id}/collection/config")
+async def get_collection_config(
+    worker_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Get collection config for a worker."""
+    config = await config_manager.get_config(worker_id)
+    if config:
+        return config.model_dump()
+    return CollectionConfig().model_dump()
+
+
+@router.put("/workers/{worker_id}/collection/config")
+async def set_collection_config(
+    worker_id: str,
+    config: CollectionConfig,
+    current_user: User = Depends(require_scope("write")),
+):
+    """Set collection config for a worker and push to worker."""
+    updated = await config_manager.set_config(worker_id, config)
+    return updated.model_dump()
+
+
+@router.post("/workers/{worker_id}/collection/start")
+async def start_collection(
+    worker_id: str,
+    current_user: User = Depends(require_scope("write")),
+):
+    """Start data collection on a worker."""
+    connection = await worker_manager.get_worker(worker_id)
+    if not connection:
+        raise HTTPException(status_code=404, detail="Worker not connected")
+
+    try:
+        result = await config_manager.start_collection(worker_id)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/workers/{worker_id}/collection/stop")
+async def stop_collection(
+    worker_id: str,
+    current_user: User = Depends(require_scope("write")),
+):
+    """Stop data collection on a worker."""
+    connection = await worker_manager.get_worker(worker_id)
+    if not connection:
+        raise HTTPException(status_code=404, detail="Worker not connected")
+
+    try:
+        result = await config_manager.stop_collection(worker_id)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/workers/{worker_id}/collection/status")
+async def get_collection_status(
+    worker_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Get collection status from a worker."""
+    status = await config_manager.get_status(worker_id)
+    if status:
+        return status.model_dump()
+    return CollectionStatus().model_dump()
+
+
+@router.get("/workers/{worker_id}/collection/sessions")
+async def list_collection_sessions(
+    worker_id: str,
+    limit: int = 50,
+    current_user: User = Depends(get_current_user),
+):
+    """List collection sessions for a worker."""
+    sessions = await config_manager.get_sessions(worker_id, limit)
+    return {"sessions": sessions}
+
+
+@router.get("/workers/{worker_id}/collection/sessions/{session_id}/chunks")
+async def list_session_chunks(
+    worker_id: str,
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """List chunks for a collection session."""
+    chunks = await config_manager.get_session_chunks(session_id)
+    return {"chunks": chunks}
+
+
+@router.get("/workers/{worker_id}/collection/chunks/{chunk_id}/video")
+async def stream_chunk_video(
+    worker_id: str,
+    chunk_id: str,
+    stream: str = "display_0/video.raw",
+    current_user: User = Depends(get_current_user),
+):
+    """Stream video from a chunk in cache."""
+    # Try to get from local cache
+    parts = chunk_id.split("/")
+    if len(parts) >= 2:
+        session_id = parts[0]
+        chunk_name = parts[1]
+        try:
+            chunk_index = int(chunk_name.replace("chunk_", ""))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid chunk ID format")
+
+        file_path = await cache_manager.get_chunk_file(
+            worker_id, session_id, chunk_index, stream
+        )
+        if file_path:
+            return FileResponse(
+                path=file_path,
+                media_type="application/octet-stream",
+                filename=f"{chunk_id}_{stream.replace('/', '_')}",
+            )
+
+    raise HTTPException(status_code=404, detail="Chunk not found in cache")
+
+
+@router.put("/admin/r2-config")
+async def set_r2_config(
+    config: R2ConfigRequest,
+    current_user: User = Depends(require_scope("admin")),
+):
+    """Set R2 storage configuration."""
+    await r2_uploader.configure(
+        endpoint=config.endpoint,
+        access_key=config.access_key,
+        secret_key=config.secret_key,
+        bucket_normal=config.bucket_normal,
+        bucket_infrequent=config.bucket_infrequent,
+    )
+    return {"status": "ok"}
+
+
+@router.post("/workers/{worker_id}/collection/encryption-key")
+async def set_encryption_key(
+    worker_id: str,
+    request: EncryptionKeyRequest,
+    current_user: User = Depends(require_scope("write")),
+):
+    """Set encryption password for a worker's collection data.
+
+    The password is used to derive an X25519 keypair.
+    Only the public key is stored - the private key is NOT stored.
+    User must remember the password to decrypt data later.
+    """
+    # Derive keypair from password
+    public_key, _, salt = encryption_manager.derive_keypair(request.password)
+
+    # Store only the public key
+    stored_key = encryption_manager.encode_key_for_storage(public_key, salt)
+    await config_manager.set_encryption_key(worker_id, stored_key)
+
+    return {"status": "ok", "message": "Encryption key set. Remember your password for decryption."}
+
+
+@router.get("/admin/cache/stats")
+async def get_cache_stats(current_user: User = Depends(require_scope("admin"))):
+    """Get cache statistics."""
+    return await cache_manager.get_stats()
+
+
+@router.get("/admin/cache/chunks")
+async def list_cache_chunks(
+    worker_id: Optional[str] = None,
+    current_user: User = Depends(require_scope("admin")),
+):
+    """List chunks in cache."""
+    chunks = await cache_manager.list_chunks(worker_id)
+    return {"chunks": chunks}
+
+
+@router.websocket("/ws/collection/{worker_id}/{stream_type}")
+async def collection_stream_websocket(
+    websocket: WebSocket,
+    worker_id: str,
+    stream_type: str,
+    token: str = Query(...),
+):
+    """WebSocket endpoint for receiving streaming collection data from workers."""
+    # Verify worker token
+    if not verify_worker_token(token):
+        await websocket.close(code=4001, reason="Invalid token")
+        return
+
+    await stream_handler.handle_websocket(websocket, worker_id, stream_type)
+
+
+@router.get("/admin/streams")
+async def list_active_streams(current_user: User = Depends(require_scope("admin"))):
+    """List active collection streams."""
+    return {"streams": stream_handler.get_active_streams()}
