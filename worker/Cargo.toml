@@ -27,7 +27,6 @@ base64 = "0.22"
 sysinfo = "0.32"
 
 # Data collection
-scap = "0.0.8"
 cpal = "0.15.2"
 nokhwa = { version = "0.10", features = ["input-native"] }
 notify = "6.0"
