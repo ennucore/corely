@@ -424,13 +424,16 @@ EOF
 Description=Corely Worker
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 [Service]
 Type=simple
 ExecStart=$INSTALL_DIR/corely
 Restart=always
-RestartSec=10
+RestartSec=5
 Environment="HOME=/root"
+StartLimitAction=none
 
 [Install]
 WantedBy=multi-user.target
@@ -449,12 +452,15 @@ EOF
 Description=Corely Worker
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 [Service]
 Type=simple
 ExecStart=$INSTALL_DIR/corely
 Restart=always
-RestartSec=10
+RestartSec=5
+StartLimitAction=none
 
 [Install]
 WantedBy=default.target
