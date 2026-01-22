@@ -17,10 +17,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Use ubuntu-20.04 for GLIBC 2.31 compatibility with older systems
-          - os: ubuntu-20.04
+          # Use ubuntu-22.04 for GLIBC 2.35 - good compatibility and fast runners
+          - os: ubuntu-22.04
             artifact: corely-worker-linux-x86_64
-          # ARM64 only available on newer runners
           - os: ubuntu-22.04-arm
             artifact: corely-worker-linux-aarch64
           - os: macos-14
