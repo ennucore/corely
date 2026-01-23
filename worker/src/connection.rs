@@ -235,6 +235,8 @@ fn get_capabilities(plugins: &[plugins::Plugin]) -> Value {
         "fs.glob",
         "fs.grep",
         "fs.stat",
+        "fs.read_binary",
+        "fs.write_binary",
         "screen.capture",
         "screen.list_displays",
         "camera.capture",
@@ -373,6 +375,28 @@ async fn handle_request(
                 .ok_or_else(|| anyhow!("Missing path"))?;
 
             filesystem::stat(path).await
+        }
+
+        "fs.read_binary" => {
+            let path = params
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("Missing path"))?;
+
+            filesystem::read_binary(path).await
+        }
+
+        "fs.write_binary" => {
+            let path = params
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("Missing path"))?;
+            let content = params
+                .get("content")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("Missing content"))?;
+
+            filesystem::write_binary(path, content).await
         }
 
         // Screen operations

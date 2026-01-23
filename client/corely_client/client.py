@@ -41,6 +41,14 @@ class FileContent(BaseModel):
     lines_returned: int
 
 
+class BinaryContent(BaseModel):
+    """Binary file content result."""
+
+    content: str  # base64 encoded
+    size: int
+    encoding: str
+
+
 class GlobResult(BaseModel):
     """Glob search result."""
 
@@ -199,6 +207,23 @@ class AsyncCorelyClient:
         return await self.call(
             worker_id,
             "fs.write",
+            {"path": path, "content": content},
+        )
+
+    async def read_binary(self, worker_id: str, path: str) -> BinaryContent:
+        """Read a binary file from a worker (base64 encoded)."""
+        result = await self.call(
+            worker_id,
+            "fs.read_binary",
+            {"path": path},
+        )
+        return BinaryContent(**result)
+
+    async def write_binary(self, worker_id: str, path: str, content: str) -> dict:
+        """Write binary content (base64-encoded) to a file on a worker."""
+        return await self.call(
+            worker_id,
+            "fs.write_binary",
             {"path": path, "content": content},
         )
 
@@ -454,6 +479,12 @@ class CorelyClient:
 
     def write(self, worker_id: str, path: str, content: str) -> dict:
         return self._run(self._async_client.write(worker_id, path, content))
+
+    def read_binary(self, worker_id: str, path: str) -> BinaryContent:
+        return self._run(self._async_client.read_binary(worker_id, path))
+
+    def write_binary(self, worker_id: str, path: str, content: str) -> dict:
+        return self._run(self._async_client.write_binary(worker_id, path, content))
 
     def edit(
         self, worker_id: str, path: str, old_string: str, new_string: str

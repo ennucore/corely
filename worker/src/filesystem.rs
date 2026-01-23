@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use glob::glob as glob_match;
 use regex::Regex;
 use serde_json::{json, Value};
@@ -62,6 +63,39 @@ pub async fn write(path: &str, content: &str) -> Result<Value> {
         "status": "ok",
         "path": path,
         "bytes_written": content.len(),
+    }))
+}
+
+/// Read a file as binary and return base64-encoded content
+pub async fn read_binary(path: &str) -> Result<Value> {
+    debug!("Reading binary file: {}", path);
+
+    let data = async_fs::read(path).await?;
+    let encoded = BASE64.encode(&data);
+
+    Ok(json!({
+        "content": encoded,
+        "size": data.len(),
+        "encoding": "base64",
+    }))
+}
+
+/// Write binary content (base64-encoded) to a file
+pub async fn write_binary(path: &str, content: &str) -> Result<Value> {
+    debug!("Writing binary file: {}", path);
+
+    // Create parent directories if they don't exist
+    if let Some(parent) = Path::new(path).parent() {
+        async_fs::create_dir_all(parent).await?;
+    }
+
+    let data = BASE64.decode(content)?;
+    async_fs::write(path, &data).await?;
+
+    Ok(json!({
+        "status": "ok",
+        "path": path,
+        "bytes_written": data.len(),
     }))
 }
 

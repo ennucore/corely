@@ -17,6 +17,7 @@ Usage:
 
 import argparse
 import asyncio
+import base64
 import getpass
 import json
 import os
@@ -725,13 +726,13 @@ def cmd_cp(args):
     dst_machine, dst_path = _parse_remote_path(args.destination)
 
     if src_machine and dst_machine:
-        # Machine to machine transfer
+        # Machine to machine transfer (binary mode)
         src_worker_id = resolve_worker(client, src_machine)
         dst_worker_id = resolve_worker(client, dst_machine)
 
-        # Download then upload
-        content = client.read(src_worker_id, src_path)
-        client.write(dst_worker_id, dst_path, content.content)
+        # Download then upload using binary mode
+        content = client.read_binary(src_worker_id, src_path)
+        client.write_binary(dst_worker_id, dst_path, content.content)
         print(f"Transferred {src_machine}:{src_path} -> {dst_machine}:{dst_path}")
 
     elif src_machine:
@@ -746,14 +747,16 @@ def cmd_cp(args):
                 _download_recursive(client, worker_id, src_path, dst_path)
                 return
 
-        content = client.read(worker_id, src_path)
+        # Use binary mode for all file transfers
+        content = client.read_binary(worker_id, src_path)
+        data = base64.b64decode(content.content)
 
         # Handle destination
         if os.path.isdir(dst_path):
             dst_path = os.path.join(dst_path, os.path.basename(src_path))
 
-        with open(dst_path, "w") as f:
-            f.write(content.content)
+        with open(dst_path, "wb") as f:
+            f.write(data)
 
         print(f"Downloaded {src_machine}:{src_path} -> {dst_path}")
 
@@ -765,10 +768,12 @@ def cmd_cp(args):
             _upload_recursive(client, worker_id, args.source, dst_path)
             return
 
-        with open(args.source) as f:
-            content = f.read()
+        # Use binary mode for all file transfers
+        with open(args.source, "rb") as f:
+            data = f.read()
+        content = base64.b64encode(data).decode("ascii")
 
-        client.write(worker_id, dst_path, content)
+        client.write_binary(worker_id, dst_path, content)
         print(f"Uploaded {args.source} -> {dst_machine}:{dst_path}")
 
     else:
@@ -800,9 +805,10 @@ def _download_recursive(client, worker_id, remote_path, local_path):
 
         os.makedirs(os.path.dirname(local_file), exist_ok=True)
 
-        content = client.read(worker_id, remote_file)
-        with open(local_file, "w") as f:
-            f.write(content.content)
+        content = client.read_binary(worker_id, remote_file)
+        data = base64.b64decode(content.content)
+        with open(local_file, "wb") as f:
+            f.write(data)
         print(f"  {remote_file}")
 
     print(f"Downloaded {len(files)} files")
@@ -825,10 +831,11 @@ def _upload_recursive(client, worker_id, local_path, remote_path):
             local_file = os.path.join(root, f)
             remote_file = f"{remote_path}/{rel_root}/{f}".replace("./", "")
 
-            with open(local_file) as fh:
-                content = fh.read()
+            with open(local_file, "rb") as fh:
+                data = fh.read()
+            content = base64.b64encode(data).decode("ascii")
 
-            client.write(worker_id, remote_file, content)
+            client.write_binary(worker_id, remote_file, content)
             print(f"  {local_file}")
             count += 1
 
